@@ -29,7 +29,7 @@ A Wayland-friendly, highly extensible application launcher designed for speed an
 ### Plugin System
 - **Integrated Suggestions**: Seamlessly blends suggestions from installed applications and active plugins based on user input.
 - **Language Agnostic**: Plugins are external executables or scripts.
-- **Persistent Processes & IPC**: For responsiveness, plugins providing real-time suggestions typically run as persistent processes managed by the launcher daemon, communicating via efficient IPC (e.g., stdin/stdout, sockets). This avoids per-keystroke startup lag.
+- **Persistent Processes & IPC**: For responsiveness, plugins providing real-time suggestions typically run as persistent processes managed by the launcher daemon, communicating via efficient IPC (D-Bus or ZeroMQ, probably the latter). This avoids per-keystroke startup lag.
 - **Plugin Lifecycle Modes**: Plugins declare their required lifecycle:
     - `daemon`: Runs persistently alongside the launcher daemon (e.g., clipboard manager).
     - `on_demand_persistent`: Started when the UI attaches or first needed; remains active while UI is shown (e.g., calculator, file search).
@@ -38,7 +38,7 @@ A Wayland-friendly, highly extensible application launcher designed for speed an
 - **Optional Prefixes**: Prefixes (e.g., `@search`) remain available to *force* querying a specific plugin.
 
 ### Plugin Installation & Security
-- **Location**: Plugins reside in `~/.config/tarragon/plugins/`.
+- **Location**: Plugins reside in `~/local/lib/tarragon/plugins/`.
 - **Build Standard**: Plugins requiring compilation must include a `Makefile` providing standardized targets:
     - `make check-deps`: Verifies necessary build tools are present. The launcher can use this to inform the user about requirements.
     - `make install`: Builds the plugin and places artifacts correctly.
@@ -143,7 +143,7 @@ flowchart TD
         InstallCommand["tarragon --install-plugin URL"]
         DepCheck["make check-deps"]
         MakeInstall["make install"]
-        PluginDir["~/.config/tarragon/plugins/"]
+        PluginDir["~/local/lib/tarragon/plugins/"]
   end
     User(["User"]) --> UI["UI Layer"]
     User -.-> InstallCommand
