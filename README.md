@@ -14,7 +14,7 @@ A Wayland-friendly, highly extensible application launcher designed for speed an
 ## Core Architecture
 
 - **Daemon Mode**: The core launcher logic runs as a persistent background daemon for instant availability.
-- **Attachable UI**: A lightweight UI (TUI or GUI) attaches to the daemon via a keyboard shortcut, providing immediate access. Communication between UI and daemon uses efficient IPC (e.g., Unix sockets, D-Bus).
+- **Attachable UI**: A lightweight UI (TUI or GUI) attaches to the daemon on pressing a keyboard shortcut, providing immediate access.
 
 ---
 
@@ -68,7 +68,6 @@ icon = "calc.png"  # Optional: Icon path
 ### Core Daemon & Architecture
 
     [ ] Implement basic daemon structure (background process management).
-    [ ] Set up IPC mechanism for communication between daemon and potential UI frontend (e.g., Unix Domain Socket or D-Bus).
     [ ] Implement the core input processing loop within the daemon.
     [ ] Design and implement configuration loading (launcher settings, etc.).
     [ ] Implement frecency calculation and storage logic.
@@ -119,29 +118,54 @@ icon = "calc.png"  # Optional: Icon path
     [ ] Set up initial project structure and build system (e.g., Go modules).
     [ ] Implement basic logging framework.
 
+## Flowchart
 
-```mermaid
-graph TD
-    A[User Input via Keyboard Shortcut] --> B(UI Process - TUI/GUI);
-    B <-->|IPC: Sockets/D-Bus| C(Core Daemon Process - Background);
-    C --> D(Plugin Manager - Core);
-    D -->|IPC| E(App Fuzzy Search - Internal Core);
-    D -->|IPC| F(Persistent Plugin 1 - On Demand);
-    D -->|IPC| G(Persistent Plugin 2 - On Demand);
-    D -->|IPC| H(Always-On Plugin - Daemon);
-    D -->|Direct Call/Exec| I(Execute On-Call Plugin);
+```mermmaid
+flowchart TD
+ subgraph Plugins["Plugin System"]
+        DaemonPlugins["Daemon Plugins\n(Run persistently)"]
+        OnDemandPlugins["On-Demand Plugins\n(Run when UI attaches)"]
+        OnCallPlugins["On-Call Plugins\n(Run when explicitly invoked)"]
+        Socket{"IPC Socket/D-Bus"}
+  end
+ subgraph Daemon["TarraGon Daemon"]
+        Core["Core Engine"]
+        QueryProcessor["Query Processor"]
+        PluginManager["Plugin Manager"]
+        AppFinder["App Finder"]
+        ResultAggregator["Result Aggregator"]
+        Config[("Configuration")]
+        FrecencyDB[("Frecency DB")]
+        Plugins
+  end
+ subgraph PluginInstall["Plugin Installation Process"]
+        GitRepo["Git Repository"]
+        InstallCommand["tarragon --install-plugin URL"]
+        DepCheck["make check-deps"]
+        MakeInstall["make install"]
+        PluginDir["~/.config/tarragon/plugins/"]
+  end
+    User(["User"]) --> UI["UI Layer"]
+    User -.-> InstallCommand
+    UI <--> QueryProcessor
+    QueryProcessor --> Core
+    Core --> PluginManager
+    Core --> AppFinder
+    Core <--> Config
+    Core <--> FrecencyDB
+    AppFinder --> ResultAggregator
+    AppFinder  --> DesktopFiles[(".desktop Files")]
+    PluginManager --> Socket
+    Socket <--> DaemonPlugins
+    Socket <--> OnDemandPlugins
+    Socket <--> OnCallPlugins
+    ResultAggregator --> UI
+    Socket --> ResultAggregator
+    InstallCommand -- "1. Clone" --> GitRepo
+    GitRepo -- "2. Check Dependencies" --> DepCheck
+    DepCheck -- "3. Build & Install" --> MakeInstall
+    MakeInstall -- "4. Register" --> PluginDir
+    PluginDir -.-> PluginManager
 
-    subgraph Core Daemon
-        direction TB
-        D
-        E
-    end
-
-    subgraph External Processes / Plugins
-        direction TB
-        F
-        G
-        H
-        I
-    end
+    classDef anchor shape:anchor
 ```
