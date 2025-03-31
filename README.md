@@ -38,7 +38,7 @@ A Wayland-friendly, highly extensible application launcher designed for speed an
 - **Optional Prefixes**: Prefixes (e.g., `@search`) remain available to *force* querying a specific plugin.
 
 ### Plugin Installation & Security
-- **Location**: Plugins reside in `~/local/lib/tarragon/plugins/`.
+- **Location**: Plugins reside in `~/.local/lib/tarragon/plugins/`.
 - **Build Standard**: Plugins requiring compilation must include a `Makefile` providing standardized targets:
     - `make check-deps`: Verifies necessary build tools are present. The launcher can use this to inform the user about requirements.
     - `make install`: Builds the plugin and places artifacts correctly.
@@ -120,8 +120,8 @@ icon = "calc.png"  # Optional: Icon path
 
 ## Flowchart
 
-```mermmaid
-flowchart TD
+```mermaid
+graph TD
  subgraph Plugins["Plugin System"]
         DaemonPlugins["Daemon Plugins\n(Run persistently)"]
         OnDemandPlugins["On-Demand Plugins\n(Run when UI attaches)"]
@@ -143,7 +143,7 @@ flowchart TD
         InstallCommand["tarragon --install-plugin URL"]
         DepCheck["make check-deps"]
         MakeInstall["make install"]
-        PluginDir["~/local/lib/tarragon/plugins/"]
+        PluginDir["~/.local/lib/tarragon/plugins/"]
   end
     User(["User"]) --> UI["UI Layer"]
     User -.-> InstallCommand
