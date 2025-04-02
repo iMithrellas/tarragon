@@ -1,0 +1,14 @@
+[Unit]
+Description=TarraGon Application Launcher
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/tarragon --daemon
+Restart=on-failure
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+

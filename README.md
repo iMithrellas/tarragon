@@ -1,6 +1,6 @@
 # TarraGon
 
-A Wayland-friendly, highly extensible application launcher designed for speed and responsiveness, featuring a powerful plugin architecture.
+A highly extensible application launcher designed for speed and responsiveness, featuring a powerful plugin architecture agnostic to the language the plugin was built in with the potential to support custom UIs also.
 
 ---
 
@@ -29,7 +29,7 @@ A Wayland-friendly, highly extensible application launcher designed for speed an
 ### Plugin System
 - **Integrated Suggestions**: Seamlessly blends suggestions from installed applications and active plugins based on user input.
 - **Language Agnostic**: Plugins are external executables or scripts.
-- **Persistent Processes & IPC**: For responsiveness, plugins providing real-time suggestions typically run as persistent processes managed by the launcher daemon, communicating via efficient IPC (D-Bus or ZeroMQ, probably the latter). This avoids per-keystroke startup lag.
+- **Persistent Processes & IPC**: For responsiveness, plugins providing real-time suggestions typically run as persistent processes managed by the launcher daemon, communicating via efficient IPC (ZeroMQ) or potentialy via TCP(Remote plugins/containerized plugins). This avoids per-keystroke lag.
 - **Plugin Lifecycle Modes**: Plugins declare their required lifecycle:
     - `daemon`: Runs persistently alongside the launcher daemon (e.g., clipboard manager).
     - `on_demand_persistent`: Started when the UI attaches or first needed; remains active while UI is shown (e.g., calculator, file search).
@@ -67,66 +67,69 @@ icon = "calc.png"  # Optional: Icon path
 
 ### Core Daemon & Architecture
 
-    [ ] Implement basic daemon structure (background process management).
-    [ ] Implement the core input processing loop within the daemon.
-    [ ] Design and implement configuration loading (launcher settings, etc.).
-    [ ] Implement frecency calculation and storage logic.
+   - [x] Implement basic daemon structure (background process management).
+   - [ ] Implement the core input processing loop within the daemon.
+   - [ ] Design and implement configuration loading (launcher settings, etc.).
+   - [ ] Implement frecency calculation and storage logic.
 
 ### Application Launcher Features
 
-    [ ] Implement .desktop file discovery and parsing.
-    [ ] Implement fuzzy search algorithm for application matching.
-    [ ] Integrate application search results into the main suggestion list.
+   - [ ] Implement .desktop file discovery and parsing.
+   - [ ] Implement fuzzy search algorithm for application matching.
+   - [ ] Integrate application search results into the main suggestion list.
 
 ### Plugin System - Core Functionality
 
-    [ ] Implement Plugin Manager within the daemon to oversee plugins.
-    [ ] Implement plugin discovery mechanism (scanning plugin directory).
-    [ ] Implement parsing for plugin configuration (.toml) files.
-    [ ] Implement plugin lifecycle management (handling daemon, on_demand_persistent, on_call modes).
-        [ ] Logic to start/stop persistent plugins.
-        [ ] Logic to execute on_call plugins.
-    [ ] Set up IPC channels (e.g., stdin/stdout pipes, sockets) for communicating with persistent plugins.
-    [ ] Implement asynchronous query dispatch (fan-out) to relevant plugins and app searcher based on input.
-    [ ] Implement asynchronous gathering of suggestions from plugins/app searcher over IPC.
-    [ ] Handle optional prefix routing (sending query only to the targeted plugin).
-    [ ] Implement logic for aggregating and ranking suggestions from multiple sources.
+   - [ ] Implement Plugin Manager within the daemon to oversee plugins.
+   - [ ] Implement plugin discovery mechanism (scanning plugin directory).
+   - [ ] Implement parsing for plugin configuration (.toml) files.
+   - [ ] Implement plugin lifecycle management (handling daemon, on_demand_persistent, on_call modes).
+       - [ ] Logic to start/stop persistent plugins.
+       - [ ] Logic to execute on_call plugins.
+   - [x] Set up IPC channels (e.g., stdin/stdout pipes, sockets) for communicating with persistent plugins.
+   - [ ] Implement asynchronous query dispatch (fan-out) to relevant plugins and app searcher based on input.
+   - [ ] Implement asynchronous gathering of suggestions from plugins/app searcher over IPC.
+   - [ ] Handle optional prefix routing (sending query only to the targeted plugin).
+   - [ ] Implement logic for aggregating and ranking suggestions from multiple sources.
 
 ### Plugin System - Installation & Management
 
-    [ ] Develop the plugin installation helper tool/command (tarragon --install-plugin ...).
-    [ ] Implement the standard of calling make check-deps in plugin Makefiles.
-        [ ] Add logic to check for required command-line tool dependencies.
-        [ ] (Optional) Add logic to parse/display dependencies to the user.
-    [ ] Implement the standard of calling make install in plugin Makefiles.
-    [ ] Add error handling for plugin build/installation failures.
+   - [ ] Develop the plugin installation helper tool/command (tarragon --install-plugin ...).
+   - [ ] Implement the standard of calling make check-deps in plugin Makefiles.
+       - [ ] Add logic to check for required command-line tool dependencies.
+       - [ ] (Optional) Add logic to parse/display dependencies to the user.
+   - [ ] Implement the standard of calling make install in plugin Makefiles.
+   - [ ] Add error handling for plugin build/installation failures.
 
 ### Plugin System - First party plugins
 
-    [ ] Implement a application launcher plugin
-    [ ] Implement a basic calculator plugin
-    [ ] Implement a web search plugin
-    [ ] Implement a clipboard manager plugin
-    [ ] Implement a file search plugin
-    [ ] Implement a todo list plugin(create, delete, mark as done)
-        [ ] Implement sync with a remote service (optional)
-    [ ] Implement a unit conversion plugin (optional)
-    [ ] Implement a weather plugin (optional)
+   - [ ] Implement an application launcher plugin
+   - [ ] Implement a basic calculator plugin
+   - [ ] Implement a web search plugin
+   - [ ] Implement a clipboard manager plugin
+   - [ ] Implement a file search plugin
+   - [ ] Implement a todo list plugin(create, delete, mark as done)
+       - [ ] Implement sync with a remote service (optional)
+   - [ ] Implement a unit conversion plugin (optional)
+   - [ ] Implement a weather plugin (optional)
 
 ### General/Foundation
 
-    [ ] Set up initial project structure and build system (e.g., Go modules).
-    [ ] Implement basic logging framework.
+   - [x] Set up initial project structure and build system (e.g., Go modules).
+   - [x] Implement basic logging framework.
 
 ## Flowchart
 
 ```mermaid
 graph TD
  subgraph Plugins["Plugin System"]
-        DaemonPlugins["Daemon Plugins\n(Run persistently)"]
-        OnDemandPlugins["On-Demand Plugins\n(Run when UI attaches)"]
-        OnCallPlugins["On-Call Plugins\n(Run when explicitly invoked)"]
-        Socket{"IPC Socket/D-Bus"}
+        DaemonPlugins["Daemon Plugins
+(Run persistently)"]
+        OnDemandPlugins["On-Demand Plugins
+(Run when UI attaches)"]
+        OnCallPlugins["On-Call Plugins
+(Run when explicitly invoked)"]
+        Socket{"IPC/TCP ZeroMQ"}
   end
  subgraph Daemon["TarraGon Daemon"]
         Core["Core Engine"]
