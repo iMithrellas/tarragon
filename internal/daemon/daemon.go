@@ -4,30 +4,20 @@ package daemon
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/go-zeromq/zmq4"
+	"github.com/iMithrellas/tarragon/pkg/models"
 	"github.com/spf13/viper"
 )
 
-const ipcEndpoint = "ipc:///tmp/tarragon.ipc"
-
-type Suggestion struct {
-	IconPath string  `json:"iconPath"`
-	Weight   float64 `json:"weight"`
-	Command  string  `json:"command"`
-}
-
-type Payload struct {
-	Action      string       `json:"action"`
-	Value       string       `json:"value"`
-	Suggestions []Suggestion `json:"suggestions"`
-}
+const (
+	ipcEndpointUi      = "ipc:///tmp/tarragon-ui.ipc"
+	ipcEndpointPlugins = "ipc:///tmp/tarragon-plugins.ipc"
+)
 
 func RunDaemon() {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -41,119 +31,81 @@ func RunDaemon() {
 		cancel()
 	}()
 
-	go routerServer(ctx, "tcp://127.0.0.1:"+viper.GetString("port"), "TCP")
-	go routerServer(ctx, ipcEndpoint, "IPC")
+	if viper.GetBool("run_tcp") {
+		go routerServer(ctx, "tcp://127.0.0.1:"+viper.GetString("port"), "TCP")
+	}
+	if viper.GetBool("run_ipc") {
+		go routerServer(ctx, ipcEndpointUi, "IPC")
+	}
 
 	<-ctx.Done()
 	log.Println("Daemon shutting down.")
 }
 
+// lookupPayload searches the trie for the given key (exact match) and returns the corresponding payload.
+func lookupPayload(trie *models.Trie, key string) *models.Payload {
+	current := trie.Root
+	for _, r := range key {
+		node, ok := current.Children[r]
+		if !ok {
+			return nil
+		}
+		current = node
+	}
+	return current.Value
+}
+
 func routerServer(ctx context.Context, endpoint, label string) {
-	if endpoint[:6] == "ipc://" {
+	// Remove stale IPC socket file if necessary.
+	if len(endpoint) >= 6 && endpoint[:6] == "ipc://" {
 		path := endpoint[6:]
 		if _, err := os.Stat(path); err == nil {
 			log.Printf("[%s] Removing stale IPC socket file: %s", label, path)
 			os.Remove(path)
 		}
 	}
-	router := zmq4.NewRouter(ctx)
-	if err := router.Listen(endpoint); err != nil {
+
+	rep := zmq4.NewRep(ctx)
+	if err := rep.Listen(endpoint); err != nil {
 		log.Fatalf("[%s] Failed to bind: %v", label, err)
 	}
-	defer router.Close()
+	defer rep.Close()
+	log.Printf("[%s] Listening on %s", label, endpoint)
 
-	log.Printf("[%s] Listening on %s\n", label, endpoint)
+	// Create the trie with test data.
+	words := []string{"banana", "zebra", "mountain", "quartz", "hyper", "echo", "lunar", "binary", "delta", "forest"}
+	trie := models.CreateTestTrie(words)
 
 	for {
-		msg, err := router.Recv()
+		msg, err := rep.Recv()
 		if err != nil {
 			log.Printf("[%s] Error receiving: %v", label, err)
 			continue
 		}
-		log.Printf("[%s] Received: %q", label, msg.Frames)
+		log.Printf("[%s] Received frames: %q", label, msg.Frames)
 
-		// Echo back "ACK" to sender
+		input := string(msg.Frames[0])
+		log.Printf("[%s] Looking up input: %s", label, input)
+
+		payload := lookupPayload(trie, input)
+		var jsonPayload []byte
+		if payload != nil {
+			jsonPayload, err = json.Marshal(payload)
+			if err != nil {
+				log.Printf("[%s] Error marshalling payload: %v", label, err)
+				jsonPayload = []byte(`{"error": "failed to marshall payload"}`)
+			}
+		} else {
+			jsonPayload = []byte(`{"error": "payload not found"}`)
+		}
+
+		// Send a single frame reply with the JSON payload.
 		reply := zmq4.Msg{
-			Frames: [][]byte{
-				msg.Frames[0],
-				[]byte("ACK"),
-			},
+			Frames: [][]byte{jsonPayload},
 		}
 
-		if err := router.Send(reply); err != nil {
-			log.Printf("[%s] Error sending ACK: %v", label, err)
+		if err := rep.Send(reply); err != nil {
+			log.Printf("[%s] Error sending reply: %v", label, err)
 		}
 	}
-}
-
-func RunBenchmark() {
-	const iterations = 100000
-
-	ctx := context.Background()
-
-	tcpEndpoint := "tcp://127.0.0.1:" + viper.GetString("port")
-	tcpDealer := zmq4.NewDealer(ctx)
-	if err := tcpDealer.Dial(tcpEndpoint); err != nil {
-		log.Fatalf("TCP dial failed: %v", err)
-	}
-	defer tcpDealer.Close()
-
-	ipcDealer := zmq4.NewDealer(ctx)
-	if err := ipcDealer.Dial(ipcEndpoint); err != nil {
-		log.Fatalf("IPC dial failed: %v", err)
-	}
-	defer ipcDealer.Close()
-
-	payload := Payload{
-		Action: "ping",
-		Value:  "benchmark",
-	}
-	for i := 0; i < 10; i++ {
-		payload.Suggestions = append(payload.Suggestions, Suggestion{
-			IconPath: fmt.Sprintf("/icons/icon_%d.png", i),
-			Weight:   float64(i) * 1.1,
-			Command:  fmt.Sprintf("command_%d", i),
-		})
-	}
-	raw, _ := json.Marshal(payload)
-
-	var tcpAvg, ipcAvg time.Duration
-
-	log.Printf("Benchmarking %d iterations...\n", iterations)
-
-	for i := 1; i <= iterations; i++ {
-		tcpDur := roundTrip(tcpDealer, raw)
-		ipcDur := roundTrip(ipcDealer, raw)
-
-		// Incremental averaging
-		tcpAvg += (tcpDur - tcpAvg) / time.Duration(i)
-		ipcAvg += (ipcDur - ipcAvg) / time.Duration(i)
-
-		if i%(iterations/10) == 0 {
-			log.Printf("Progress: %d%%", (i*100)/iterations)
-		}
-	}
-
-	fmt.Printf("\nAveraged Results over %d iterations:\n", iterations)
-	fmt.Printf("TCP: %v\n", tcpAvg)
-	fmt.Printf("IPC: %v\n", ipcAvg)
-}
-
-func roundTrip(socket zmq4.Socket, data []byte) time.Duration {
-	start := time.Now()
-
-	if err := socket.Send(zmq4.NewMsg(data)); err != nil {
-		log.Fatalf("Send failed: %v", err)
-	}
-
-	msg, err := socket.Recv()
-	if err != nil {
-		log.Fatalf("Recv failed: %v", err)
-	}
-
-	if len(msg.Frames) == 0 || string(msg.Frames[0]) != "ACK" {
-		log.Fatalf("Unexpected reply: %q", msg.Frames)
-	}
-
-	return time.Since(start)
 }

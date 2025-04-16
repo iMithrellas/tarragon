@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/tarragon --daemon
+ExecStart=%h/.local/bin/tarragon --daemon --port 7777
 Restart=on-failure
 StandardOutput=journal
 StandardError=journal

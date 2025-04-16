@@ -7,6 +7,7 @@ import (
 
 	"github.com/iMithrellas/tarragon/internal/config"
 	"github.com/iMithrellas/tarragon/internal/daemon"
+	"github.com/iMithrellas/tarragon/internal/ui"
 	"github.com/spf13/viper"
 )
 
@@ -28,8 +29,8 @@ func main() {
 	switch {
 	case viper.GetBool("daemon"):
 		daemon.RunDaemon()
-	case viper.GetBool("bench"):
-		daemon.RunBenchmark()
+	case viper.GetBool("tui"):
+		ui.RunTUI()
 	default:
 		log.Println("No mode selected. Use --daemon or --bench")
 	}
