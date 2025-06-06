@@ -29,7 +29,7 @@ A highly extensible application launcher designed for speed and responsiveness, 
 ### Plugin System
 - **Integrated Suggestions**: Seamlessly blends suggestions from installed applications and active plugins based on user input.
 - **Language Agnostic**: Plugins are external executables or scripts.
-- **Persistent Processes & IPC**: For responsiveness, plugins providing real-time suggestions typically run as persistent processes managed by the launcher daemon, communicating via efficient IPC (ZeroMQ) or potentialy via TCP(Remote plugins/containerized plugins). This avoids per-keystroke lag.
+- **Persistent Processes & IPC**: For responsiveness, plugins providing real-time suggestions typically run as persistent processes managed by the launcher daemon, communicating via efficient IPC (ZeroMQ) or potentially via TCP(Remote plugins/containerized plugins). This avoids per-keystroke lag.
 - **Plugin Lifecycle Modes**: Plugins declare their required lifecycle:
     - `daemon`: Runs persistently alongside the launcher daemon (e.g., clipboard manager).
     - `on_demand_persistent`: Started when the UI attaches or first needed; remains active while UI is shown (e.g., calculator, file search).
@@ -72,8 +72,8 @@ icon = "calc.png"  # Optional: Icon path
    - [x] Design and implement configuration loading (launcher settings, etc.).
    - [ ] Implement frecency calculation and storage logic.
    - [ ] Cache suggestions in a Trie structure for fast lookups. (For example after a typo)
-      - [ ] Let users copnfigure the cache TTL or let plugins decide the TTL for their suggestions.
-   - [ ] Simple UI for testing Functionality. (Bubble Tea?)
+      - [ ] Let users configure the cache TTL or let plugins decide the TTL for their suggestions.
+   - [ ] Simple UI for testing functionality. (Bubble Tea?)
 
 ### Plugin System - Core Functionality
 
