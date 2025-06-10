@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/go-zeromq/zmq4"
+	"github.com/iMithrellas/tarragon/internal/plugins"
 	"github.com/iMithrellas/tarragon/pkg/models"
 	"github.com/spf13/viper"
 )
@@ -22,6 +23,16 @@ const (
 func RunDaemon() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	pluginDir := plugins.DefaultDir()
+	mgr := plugins.NewManager(pluginDir)
+	if err := mgr.Discover(); err != nil {
+		log.Printf("Plugin discovery error: %v", err)
+	}
+	if err := mgr.StartPersistent(ctx); err != nil {
+		log.Printf("Plugin start error: %v", err)
+	}
+	defer mgr.StopAll()
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
