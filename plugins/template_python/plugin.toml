@@ -1,0 +1,12 @@
+name = "template_python"
+description = "Template Python plugin that returns three transposed variants of the input."
+enabled = true
+entrypoint = "template_plugin.py"
+lifecycle_mode = "daemon"
+
+provides_general_suggestions = true
+prefix = "@tpl"
+build_dependencies = ["python3"]
+capabilities = ["suggest"]
+icon = ""
+

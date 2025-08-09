@@ -1,0 +1,12 @@
+name = "template_rust"
+description = "Template Rust plugin that returns three transposed variants of the input."
+enabled = true
+entrypoint = "template_rust"
+lifecycle_mode = "daemon"
+
+provides_general_suggestions = true
+prefix = "@tpl"
+build_dependencies = ["cargo", "rustc"]
+capabilities = ["suggest"]
+icon = ""
+
