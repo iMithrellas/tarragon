@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/go-zeromq/zmq4"
+	"github.com/iMithrellas/tarragon/internal/wire"
 )
 
 // Endpoints used to talk to the daemon.
@@ -44,7 +45,7 @@ func RunTUI() {
 
 	// REQ socket for starting queries and detach
 	req := zmq4.NewReq(ctx)
-	if err := req.Dial(endpointUIReq); err != nil {
+	if err := req.Dial(wire.EndpointUIReq); err != nil {
 		fmt.Fprintf(os.Stderr, "connect error (REQ): %v\n", err)
 		os.Exit(1)
 	}
@@ -52,7 +53,7 @@ func RunTUI() {
 
 	// SUB socket for receiving updates.
 	sub := zmq4.NewSub(ctx)
-	if err := sub.Dial(endpointUISub); err != nil {
+	if err := sub.Dial(wire.EndpointUISub); err != nil {
 		fmt.Fprintf(os.Stderr, "connect error (SUB): %v\n", err)
 		os.Exit(1)
 	}
@@ -85,7 +86,7 @@ func RunTUI() {
 			if !ok {
 				continue
 			}
-			var upd updateMessage
+			var upd wire.UpdateMessage
 			if err := json.Unmarshal(msg.Frames[1], &upd); err != nil {
 				fmt.Fprintf(os.Stderr, "update parse error: %v\n", err)
 				continue
@@ -95,7 +96,9 @@ func RunTUI() {
 			s := string(pretty)
 			lines := 1
 			for i := 0; i < len(s); i++ {
-				if s[i] == '\n' { lines++ }
+				if s[i] == '\n' {
+					lines++
+				}
 			}
 			// Save cursor, move to start of block, clear, print, restore.
 			// Best-effort: may interfere with the prompt while typing.
@@ -106,13 +109,19 @@ func RunTUI() {
 				// Clear lastLines lines.
 				for i := 0; i < lastLines; i++ {
 					fmt.Print("\033[2K") // clear line
-					if i < lastLines-1 { fmt.Print("\033[1B") } // move down
+					if i < lastLines-1 {
+						fmt.Print("\033[1B")
+					} // move down
 				}
 				// Move back to top of block.
-				if lastLines > 1 { fmt.Printf("\033[%dA", lastLines-1) }
+				if lastLines > 1 {
+					fmt.Printf("\033[%dA", lastLines-1)
+				}
 			}
 			fmt.Print(s)
-			if !strings.HasSuffix(s, "\n") { fmt.Print("\n") }
+			if !strings.HasSuffix(s, "\n") {
+				fmt.Print("\n")
+			}
 			lastLines = lines
 			fmt.Print("\0338") // restore cursor
 		}
@@ -134,7 +143,7 @@ func RunTUI() {
 		switch strings.ToLower(query) {
 		case ":q", "q", "quit", "exit":
 			// best-effort detach
-			reqBody, _ := json.Marshal(map[string]any{"type": "detach", "client_id": clientID})
+			reqBody, _ := json.Marshal(&wire.UIRequest{Type: "detach", ClientID: clientID})
 			_ = req.Send(zmq4.NewMsg(reqBody))
 			_, _ = req.Recv()
 			close(doneCh)
@@ -142,7 +151,7 @@ func RunTUI() {
 		}
 
 		// send JSON query
-		reqBody, _ := json.Marshal(map[string]any{"type": "query", "client_id": clientID, "text": query})
+		reqBody, _ := json.Marshal(&wire.UIRequest{Type: "query", ClientID: clientID, Text: query})
 		if err := req.Send(zmq4.NewMsg(reqBody)); err != nil {
 			fmt.Fprintf(os.Stderr, "send error: %v\n", err)
 			continue
@@ -154,7 +163,7 @@ func RunTUI() {
 			fmt.Fprintf(os.Stderr, "ack error: %v\n", err)
 			continue
 		}
-		var ack ackMessage
+		var ack wire.AckMessage
 		if err := json.Unmarshal(reply.Frames[0], &ack); err != nil || ack.QueryID == "" {
 			fmt.Fprintf(os.Stderr, "ack parse error: %v\n", err)
 			continue

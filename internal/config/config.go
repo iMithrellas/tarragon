@@ -16,10 +16,8 @@ func BindFlags() {
 	pflag.String("port", "", "Port number")
 	pflag.Int("tuidebounce", 0, "Debounce duration for TUI in ms(e.g., 300)")
 	pflag.BoolP("daemon", "d", false, "Run in daemon mode")
-	pflag.BoolP("bench", "b", false, "Run in benchmark mode")
 	pflag.BoolP("tui", "t", false, "Run with text-based user interface")
 	pflag.BoolP("gui", "g", false, "Run with graphical user interface")
-
 	pflag.Parse()
 
 	pflag.Visit(func(f *pflag.Flag) {
@@ -70,8 +68,8 @@ func GenerateConfig(path string) error {
 	viper.Set("run_tcp", false)
 	viper.Set("run_ipc", true)
 	viper.Set("port", "5555")
-    viper.Set("tuidebounce", 200)
-    viper.Set("max_aggregates", 64)
+	viper.Set("tuidebounce", 200)
+	viper.Set("max_aggregates", 64)
 
 	if err := viper.WriteConfigAs(path); err != nil {
 		return fmt.Errorf("error writing config file: %w", err)

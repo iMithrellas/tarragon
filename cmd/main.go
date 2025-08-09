@@ -32,6 +32,6 @@ func main() {
 	case viper.GetBool("tui"):
 		ui.RunTUI()
 	default:
-		log.Println("No mode selected. Use --daemon or --bench")
+		log.Println("No mode selected. Use --daemon or -t")
 	}
 }
