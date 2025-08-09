@@ -26,3 +26,9 @@ go.work.sum
 
 # build artefacts
 build
+
+# Go local build cache
+.gocache/
+
+# Rust build outputs in template plugin
+plugins/template_rust/target/

@@ -70,7 +70,8 @@ func GenerateConfig(path string) error {
 	viper.Set("run_tcp", false)
 	viper.Set("run_ipc", true)
 	viper.Set("port", "5555")
-	viper.Set("tuidebounce", 200)
+    viper.Set("tuidebounce", 200)
+    viper.Set("max_aggregates", 64)
 
 	if err := viper.WriteConfigAs(path); err != nil {
 		return fmt.Errorf("error writing config file: %w", err)

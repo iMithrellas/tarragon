@@ -26,7 +26,9 @@ except Exception:  # noqa: BLE001
 
 
 def _ensure_log_dir() -> str:
-    root = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
+    root = os.environ.get("XDG_CACHE_HOME") or os.path.join(
+        os.path.expanduser("~"), ".cache"
+    )
     log_dir = os.path.join(root, "tarragon", "plugins", "template_python")
     os.makedirs(log_dir, exist_ok=True)
     return log_dir
@@ -50,28 +52,59 @@ def _setup_logging() -> logging.Logger:
     return logger
 
 
-def _reverse(s: str) -> str: return s[::-1]
-def _upper(s: str) -> str: return s.upper()
-def _title(s: str) -> str: return s.title()
+def _reverse(s: str) -> str:
+    return s[::-1]
+
+
+def _upper(s: str) -> str:
+    return s.upper()
+
+
+def _title(s: str) -> str:
+    return s.title()
+
+
 def _rot13(s: str) -> str:
     a = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
     b = "NOPQRSTUVWXYZABCDEFGHIJKLMnopqrstuvwxyzabcdefghijklm"
     return s.translate(str.maketrans(a, b))
-def _sorted_letters(s: str) -> str: return "".join(sorted(s))
+
+
+def _sorted_letters(s: str) -> str:
+    return "".join(sorted(s))
+
+
 def _shuffle_letters(s: str) -> str:
-    chars = list(s); random.shuffle(chars); return "".join(chars)
+    chars = list(s)
+    random.shuffle(chars)
+    return "".join(chars)
+
+
 def _alternating_caps(s: str) -> str:
-    out=[]; t=False
+    out = []
+    t = False
     for ch in s:
-        if ch.isalpha(): out.append(ch.upper() if t else ch.lower()); t=not t
-        else: out.append(ch)
+        if ch.isalpha():
+            out.append(ch.upper() if t else ch.lower())
+            t = not t
+        else:
+            out.append(ch)
     return "".join(out)
-def _strip_vowels(s: str) -> str: return "".join(ch for ch in s if ch.lower() not in "aeiou")
+
+
+def _strip_vowels(s: str) -> str:
+    return "".join(ch for ch in s if ch.lower() not in "aeiou")
 
 
 TRANSFORMS: List[Callable[[str], str]] = [
-    _reverse, _upper, _title, _rot13, _sorted_letters,
-    _shuffle_letters, _alternating_caps, _strip_vowels,
+    _reverse,
+    _upper,
+    _title,
+    _rot13,
+    _sorted_letters,
+    _shuffle_letters,
+    _alternating_caps,
+    _strip_vowels,
 ]
 
 
@@ -79,6 +112,7 @@ def process(text: str) -> List[str]:
     if not isinstance(text, str):
         raise TypeError("process(text) expects a string")
     funcs = random.sample(TRANSFORMS, k=3)
+    time.sleep(3)
     return [fn(text) for fn in funcs]
 
 
@@ -114,8 +148,12 @@ def _run_daemon(logger: logging.Logger) -> int:
             return 1
 
         stop = False
+
         def _sigterm(_sig, _frm):
-            nonlocal stop; logger.info("shutdown signal received"); stop = True
+            nonlocal stop
+            logger.info("shutdown signal received")
+            stop = True
+
         signal.signal(signal.SIGTERM, _sigterm)
         signal.signal(signal.SIGINT, _sigterm)
 
@@ -137,7 +175,11 @@ def _run_daemon(logger: logging.Logger) -> int:
             logger.info("request received qid=%s: %s", qid, text)
             try:
                 variants = process(text)
-                resp = {"type": "response", "query_id": qid, "data": {"input": text, "variants": variants}}
+                resp = {
+                    "type": "response",
+                    "query_id": qid,
+                    "data": {"input": text, "variants": variants},
+                }
             except Exception as e:  # noqa: BLE001
                 resp = {"type": "response", "query_id": qid, "data": {"error": str(e)}}
             try:
@@ -154,20 +196,27 @@ def _run_daemon(logger: logging.Logger) -> int:
         logger.error("pyzmq not available; install with 'pip install pyzmq'")
     logger.info("plugin started successfully; awaiting work (idle mode)")
     stop = False
+
     def _sigterm(_sig, _frm):
-        nonlocal stop; logger.info("shutdown signal received"); stop = True
+        nonlocal stop
+        logger.info("shutdown signal received")
+        stop = True
+
     signal.signal(signal.SIGTERM, _sigterm)
     signal.signal(signal.SIGINT, _sigterm)
     while not stop:
         time.sleep(5.0)
         logger.info("heartbeat: running")
-    logger.info("plugin exiting"); return 0
+    logger.info("plugin exiting")
+    return 0
 
 
 def main(argv: List[str] | None = None) -> int:
     logger = _setup_logging()
     parser = argparse.ArgumentParser(description="Tarragon Template Python Plugin")
-    parser.add_argument("--once", metavar="TEXT", help="Process once and print JSON response")
+    parser.add_argument(
+        "--once", metavar="TEXT", help="Process once and print JSON response"
+    )
     args = parser.parse_args(argv)
     if args.once:
         return _cli_once(logger, args.once)
