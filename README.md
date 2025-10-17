@@ -63,60 +63,10 @@ capabilities = ["suggest", "icon"]  # Optional: Extra features
 icon = "calc.png"  # Optional: Icon path
 ```
 
-## Development TODO (Backend/Core - Excluding UI)
+## Development TODO
 
-### Core Daemon & Architecture
+Moved to GitHub issue: Roadmap — https://github.com/iMithrellas/tarragon/issues/4
 
-   - [x] Implement basic daemon structure (background process management).
-   - [ ] Implement the core input processing loop within the daemon.
-   - [x] Design and implement configuration loading (launcher settings, etc.).
-   - [ ] Implement frecency calculation and storage logic.
-   - [ ] Cache suggestions in a Trie structure for fast lookups. (For example after a typo)
-      - [ ] Let users configure the cache TTL or let plugins decide the TTL for their suggestions.
-   - [ ] Simple UI for testing functionality. (Bubble Tea?)
-
-### Plugin System - Core Functionality
-
-   - [ ] Implement Plugin Manager within the daemon to oversee plugins.
-   - [ ] Implement plugin discovery mechanism (scanning plugin directory).
-   - [ ] Implement parsing for plugin configuration (.toml) files.
-   - [ ] Implement plugin lifecycle management (handling daemon, on_demand_persistent, on_call modes).
-       - [ ] Logic to start/stop persistent plugins.
-       - [ ] Logic to execute on_call plugins.
-   - [x] Set up IPC channels (e.g., stdin/stdout pipes, sockets) for communicating with persistent plugins.
-   - [ ] Implement asynchronous query dispatch (fan-out) to relevant plugins and app searcher based on input.
-   - [ ] Implement asynchronous gathering of suggestions from plugins/app searcher over IPC.
-   - [ ] Handle optional prefix routing (sending query only to the targeted plugin).
-   - [ ] Implement logic for aggregating and ranking suggestions from multiple sources.
-
-### Plugin System - Installation & Management
-
-   - [ ] Develop the plugin installation helper tool/command (tarragon --install-plugin ...).
-   - [ ] Implement the standard of calling make check-deps in plugin Makefiles.
-       - [ ] Add logic to check for required command-line tool dependencies.
-       - [ ] (Optional) Add logic to parse/display dependencies to the user.
-   - [ ] Implement the standard of calling make install in plugin Makefiles.
-   - [ ] Add error handling for plugin build/installation failures.
-
-### Plugin System - First party plugins
-
-   - [ ] Implement an application launcher plugin
-      - [ ] Implement .desktop file discovery and parsing.
-      - [ ] Implement fuzzy search algorithm for application matching.
-      - [ ] Integrate application search results into the main suggestion list.
-   - [ ] Implement a basic calculator plugin
-   - [ ] Implement a web search plugin
-   - [ ] Implement a clipboard manager plugin
-   - [ ] Implement a file search plugin
-   - [ ] Implement a todo list plugin(create, delete, mark as done)
-       - [ ] Implement sync with a remote service (optional)
-   - [ ] Implement a unit conversion plugin (optional)
-   - [ ] Implement a weather plugin (optional)
-
-### General/Foundation
-
-   - [x] Set up initial project structure and build system (e.g., Go modules).
-   - [x] Implement basic logging framework.
 
 ## Flowchart
 
