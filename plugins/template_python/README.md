@@ -11,4 +11,3 @@ Install
 Runtime
 - Lifecycle is set to `daemon` in `plugin.toml`; Tarragon may also invoke `--once` for query handling.
 - Logs are written to stderr and `~/.cache/tarragon/plugins/template_python/plugin.log`.
-

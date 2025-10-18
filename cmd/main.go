@@ -2,9 +2,9 @@
 package main
 
 import (
-    "github.com/iMithrellas/tarragon/internal/cli"
+	"github.com/iMithrellas/tarragon/internal/cli"
 )
 
 func main() {
-    cli.Execute()
+	cli.Execute()
 }

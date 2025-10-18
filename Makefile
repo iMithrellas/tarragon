@@ -32,5 +32,22 @@ reload-service:
 
 run: build install-binary install-service reload-service
 
-.PHONY: build install-binary install-service reload-service run
+.PHONY: build install-binary install-service reload-service run setup-precommit
 
+setup-precommit:
+	@if command -v pre-commit >/dev/null 2>&1; then \
+		echo "pre-commit already installed."; \
+	elif command -v pacman >/dev/null 2>&1; then \
+		echo "Installing pre-commit via pacman..."; \
+		sudo pacman -S --needed --noconfirm pre-commit; \
+	elif command -v apt-get >/dev/null 2>&1; then \
+		echo "Installing pre-commit via apt..."; \
+		sudo apt-get update && sudo apt-get install -y pre-commit; \
+	elif command -v brew >/dev/null 2>&1; then \
+		echo "Installing pre-commit via Homebrew..."; \
+		brew install pre-commit; \
+	else \
+		echo "No supported package manager found, falling back to pip..."; \
+		pip install --user pre-commit; \
+	fi
+	pre-commit install

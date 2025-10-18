@@ -9,4 +9,3 @@ prefix = "@tpl"
 build_dependencies = ["cargo", "rustc"]
 capabilities = ["suggest"]
 icon = ""
-

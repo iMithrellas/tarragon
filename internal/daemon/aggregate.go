@@ -36,12 +36,6 @@ func newAggregateStore(limit int) *aggregateStore {
 	}
 }
 
-func (s *aggregateStore) setLimit(limit int) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.limit = limit
-}
-
 func (s *aggregateStore) create(qid, client, input string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

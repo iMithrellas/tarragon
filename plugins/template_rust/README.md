@@ -12,4 +12,3 @@ Build and Test
 Runtime
 - Lifecycle is set to `daemon` in `plugin.toml`; Tarragon may also invoke `--once` for query handling.
 - Logs go to stderr and ~/.cache/tarragon/plugins/template_rust/plugin.log.
-

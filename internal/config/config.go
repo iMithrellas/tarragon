@@ -2,14 +2,14 @@
 package config
 
 import (
-    "encoding/json"
-    "fmt"
-    "os"
-    "path/filepath"
-    "strings"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 
-    "github.com/iMithrellas/tarragon/internal/db"
-    "github.com/spf13/viper"
+	"github.com/iMithrellas/tarragon/internal/db"
+	"github.com/spf13/viper"
 )
 
 type ConfigFormat string
@@ -117,19 +117,19 @@ func LoadConfig(configDir string) error {
 		viper.SetConfigType("toml")
 	}
 
-    if err := viper.ReadInConfig(); err != nil {
-        return fmt.Errorf("error reading config file: %w", err)
-    }
+	if err := viper.ReadInConfig(); err != nil {
+		return fmt.Errorf("error reading config file: %w", err)
+	}
 
-    // Remove JSON comments key if present
-    viper.Set("_comments", nil)
+	// Remove JSON comments key if present
+	viper.Set("_comments", nil)
 
-    SetupEnvironment()
+	SetupEnvironment()
 
-    return nil
+	return nil
 }
 
-// InitConfig handles config initialization: generation if requested, 
+// InitConfig handles config initialization: generation if requested,
 // loading existing config, or auto-generating default if none exists
 func InitConfig(configDir string, regenerate bool, format string) error {
 	// Handle explicit config generation request
@@ -151,7 +151,7 @@ func InitConfig(configDir string, regenerate bool, format string) error {
 	if err := LoadConfig(configDir); err != nil {
 		// If no config exists, auto-generate a default one
 		if strings.Contains(err.Error(), "no config file found") {
-			fmt.Fprintln(os.Stderr, 
+			fmt.Fprintln(os.Stderr,
 				"No config file found, generating default...")
 			configPath := filepath.Join(configDir, "tarragon.toml")
 			if err := GenerateConfig(configPath, FormatTOML); err != nil {

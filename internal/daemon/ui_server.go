@@ -25,7 +25,7 @@ func reqServer(ctx context.Context, endpoint, label string, mgr *plugins.Manager
 	if err := pub.Listen(wire.EndpointUISub); err != nil {
 		log.Fatalf("[%s] Failed to bind PUB: %v", label, err)
 	}
-	defer pub.Close()
+	defer func() { _ = pub.Close() }()
 
 	// Single publisher goroutine to serialize socket access
 	pubChan := make(chan pubFrame, 128)
@@ -47,7 +47,7 @@ func reqServer(ctx context.Context, endpoint, label string, mgr *plugins.Manager
 	if err := rep.Listen(endpoint); err != nil {
 		log.Fatalf("[%s] Failed to bind REQ/REP: %v", label, err)
 	}
-	defer rep.Close()
+	defer func() { _ = rep.Close() }()
 	log.Printf("[%s] Listening REQ on %s; PUB on %s", label, endpoint, wire.EndpointUISub)
 
 	for {

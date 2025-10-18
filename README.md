@@ -67,6 +67,10 @@ icon = "calc.png"  # Optional: Icon path
 
 Moved to GitHub issue: Roadmap — https://github.com/iMithrellas/tarragon/issues/4
 
+## Contributing
+
+Contributions are welcome! Please read CONTRIBUTING.md for setup, Makefile usage, and pre-commit hooks. Running pre-commit locally helps keep builds green and diffs clean.
+
 
 ## Shell Completions
 

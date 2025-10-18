@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"os"
 	"strings"
 	"sync"
@@ -15,33 +14,12 @@ import (
 	"github.com/iMithrellas/tarragon/internal/wire"
 )
 
-// Endpoints used to talk to the daemon.
-const (
-	endpointUIReq = "ipc:///tmp/tarragon-ui.ipc"      // REQ/REP for initiating a query
-	endpointUISub = "ipc:///tmp/tarragon-updates.ipc" // PUB/SUB for async updates
-)
-
-// ackMessage is received after sending a query to the daemon.
-type ackMessage struct {
-	Type    string `json:"type"` // "ack"
-	QueryID string `json:"query_id"`
-}
-
-// updateMessage is streamed over PUB/SUB with incremental results.
-type updateMessage struct {
-	Type    string          `json:"type"` // "update"
-	QueryID string          `json:"query_id"`
-	Payload json.RawMessage `json:"payload"` // Arbitrary payload (daemon uses models.Payload)
-	Done    bool            `json:"done"`
-}
-
 func RunTUI() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// session client ID
-	rand.Seed(time.Now().UnixNano())
-	clientID := fmt.Sprintf("cli-%d-%d", time.Now().UnixNano(), rand.Intn(1_000_000))
+	// session client ID (time component is sufficient)
+	clientID := fmt.Sprintf("cli-%d", time.Now().UnixNano())
 
 	// REQ socket for starting queries and detach
 	req := zmq4.NewReq(ctx)
@@ -49,7 +27,7 @@ func RunTUI() {
 		fmt.Fprintf(os.Stderr, "connect error (REQ): %v\n", err)
 		os.Exit(1)
 	}
-	defer req.Close()
+	defer func() { _ = req.Close() }()
 
 	// SUB socket for receiving updates.
 	sub := zmq4.NewSub(ctx)
@@ -57,7 +35,7 @@ func RunTUI() {
 		fmt.Fprintf(os.Stderr, "connect error (SUB): %v\n", err)
 		os.Exit(1)
 	}
-	defer sub.Close()
+	defer func() { _ = sub.Close() }()
 
 	// background receiver
 	var subMu sync.Mutex
@@ -79,9 +57,8 @@ func RunTUI() {
 			if len(msg.Frames) < 2 {
 				continue
 			}
-			topic := string(msg.Frames[0])
 			subMu.Lock()
-			_, ok := active[topic]
+			_, ok := active[string(msg.Frames[0])]
 			subMu.Unlock()
 			if !ok {
 				continue
