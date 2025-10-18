@@ -1,20 +1,27 @@
 # TarraGon
 
-A highly extensible application launcher designed for speed and responsiveness, featuring a powerful plugin architecture agnostic to the language the plugin was built in with the potential to support custom UIs also.
+A highly extensible automation and interaction framework with a language-agnostic plugin system. Built for speed and responsiveness, Tarragon can power anything from command launchers to custom user interfaces. Similar in spirit to macOS Spotlight, Alfred, or dmenu, but designed around a lightweight daemon–plugin architecture that makes it far more extensible and performant.
 
 ---
 
 ## Core Purpose
 
-- **Primary**: Fast, fuzzy-matching application launcher integrating results from multiple sources (applications, plugins).
-- **Secondary**: Extensible via external plugins for calculations, web search, clipboard management, unit conversion, and more. Prefixes (e.g., `@search`) can be used to explicitly target plugins but are not required for general suggestions.
+- **Primary**: Provide a fast, lightweight core that aggregates and routes requests/responses between plugins and frontends (CLI, TUI, GUI, or custom).
+- **Secondary**: Enable easy plugin development in any language through a well-defined protocol (e.g., ZeroMQ), supporting rich use-cases like:
+  - application launching (roots of the project)
+  - calculations and unit conversions
+  - web/API integrations
+  - clipboard or system utilities
+  - custom UI components
+
+Plugins can be invoked directly or contextually, and can expose commands, values, or data streams. Prefixes (e.g., `@search`) are optional hints for targeting specific plugins.
 
 ---
 
 ## Core Architecture
 
 - **Daemon Mode**: The core launcher logic runs as a persistent background daemon for instant availability.
-- **Attachable UI**: A lightweight UI (TUI or GUI) attaches to the daemon on pressing a keyboard shortcut, providing immediate access.
+- **Attachable UI**: A lightweight UI attaches to the daemon on pressing a keyboard shortcut, providing immediate access.
 
 ---
 
@@ -48,29 +55,15 @@ A highly extensible application launcher designed for speed and responsiveness, 
 
 ## Plugin Configuration
 
-Each plugin should have a `.toml` configuration file (e.g., `calc.toml`):
-
-```toml
-name = "Calculator"
-description = "Evaluate basic math expressions"
-enabled = true
-entrypoint = "calc_plugin_executable"  # Path to the executable/script relative to plugin dir
-lifecycle_mode = "on_demand_persistent"  # Options: "daemon", "on_demand_persistent", "on_call"
-provides_general_suggestions = true  # Responds to input without a prefix?
-prefix = "@calc"  # Optional: Prefix to force this plugin
-build_dependencies = ["make", "go"]  # Optional: List of tools checked by 'make check-deps'
-capabilities = ["suggest", "icon"]  # Optional: Extra features
-icon = "calc.png"  # Optional: Icon path
-```
-
-## Development TODO
-
-Moved to GitHub issue: Roadmap — https://github.com/iMithrellas/tarragon/issues/4
+See [https://github.com/iMithrellas/tarragon/blob/master/docs/plugins.md](plugins.md).
 
 ## Contributing
 
-Contributions are welcome! Please read CONTRIBUTING.md for setup, Makefile usage, and pre-commit hooks. Running pre-commit locally helps keep builds green and diffs clean.
+Contributions are VERY welcome! See [https://github.com/iMithrellas/tarragon/blob/master/CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. Running pre-commit locally helps keep builds green and diffs clean <3.
 
+### Development TODO
+
+Moved to GitHub issue: Roadmap — https://github.com/iMithrellas/tarragon/issues/4
 
 ## Shell Completions
 
@@ -78,15 +71,7 @@ Generate completion scripts to a user-writable data dir and source them from you
 
 - Target directory: `$XDG_DATA_HOME/tarragon/completions` (fallback: `~/.local/share/tarragon/completions`)
 
-Generate
-
-- All shells (prints per-shell sourcing hints):
-```
-tarragon completion generate
-```
-
-- Specific shells:
-```
+```bash
 tarragon completion generate bash
 tarragon completion generate zsh fish
 ```
@@ -121,17 +106,20 @@ graph TD
  subgraph Plugins["Plugin System"]
         DaemonPlugins["Daemon Plugins
 (Run persistently)"]
+        ClipboardMgr["Example: Clipboard Manager"]
         OnDemandPlugins["On-Demand Plugins
 (Run when UI attaches)"]
+        AppLauncher["Example: App Launcher"]
         OnCallPlugins["On-Call Plugins
 (Run when explicitly invoked)"]
+        SearchEngines["Example: Search Engines
+        (Youtube/Wiki)"]
         Socket{"IPC/TCP ZeroMQ"}
   end
  subgraph Daemon["TarraGon Daemon"]
         Core["Core Engine"]
         QueryProcessor["Query Processor"]
         PluginManager["Plugin Manager"]
-        AppFinder["App Finder"]
         ResultAggregator["Result Aggregator"]
         Config[("Configuration")]
         FrecencyDB[("Frecency DB")]
@@ -139,7 +127,7 @@ graph TD
   end
  subgraph PluginInstall["Plugin Installation Process"]
         GitRepo["Git Repository"]
-        InstallCommand["tarragon --install-plugin URL"]
+        InstallCommand["tarragon install-plugin URL"]
         DepCheck["make check-deps"]
         MakeInstall["make install"]
         PluginDir["~/.local/lib/tarragon/plugins/"]
@@ -149,14 +137,14 @@ graph TD
     UI <--> QueryProcessor
     QueryProcessor --> Core
     Core --> PluginManager
-    Core --> AppFinder
     Core <--> Config
-    Core <--> FrecencyDB
-    AppFinder --> ResultAggregator
-    AppFinder  --> DesktopFiles[(".desktop Files")]
+    ResultAggregator <--> FrecencyDB
     PluginManager --> Socket
     Socket <--> DaemonPlugins
+    DaemonPlugins --> ClipboardMgr
     Socket <--> OnDemandPlugins
+    OnDemandPlugins --> AppLauncher
+    OnCallPlugins --> SearchEngines
     Socket <--> OnCallPlugins
     ResultAggregator --> UI
     Socket --> ResultAggregator

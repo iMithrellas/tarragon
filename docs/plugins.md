@@ -21,7 +21,7 @@ Plugins are installed under `~/.local/lib/tarragon/plugins/<plugin_name>/` and d
 
 Example `plugin.toml`:
 
-```
+```toml
 name = "template_python"
 description = "Template Python plugin"
 enabled = true
@@ -32,6 +32,19 @@ provides_general_suggestions = true
 prefix = "@tpl"
 build_dependencies = ["python3"]
 capabilities = ["suggest"]
+```
+
+```toml
+name = "Calculator"
+description = "Evaluate basic math expressions"
+enabled = true
+entrypoint = "calc_plugin_executable"  # Path to the executable/script relative to plugin dir
+lifecycle_mode = "on_demand_persistent"  # Options: "daemon", "on_demand_persistent", "on_call"
+provides_general_suggestions = true  # Responds to input without a prefix?
+prefix = "@calc"  # Optional: Prefix to force this plugin
+build_dependencies = ["make", "go"]  # Optional: List of tools checked by 'make check-deps'
+capabilities = ["suggest", "icon"]  # Optional: Extra features
+icon = "calc.png"  # Optional: Icon path
 ```
 
 Lifecycle modes:
