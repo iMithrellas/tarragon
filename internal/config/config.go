@@ -2,15 +2,14 @@
 package config
 
 import (
-	"encoding/json"
-	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
+    "encoding/json"
+    "fmt"
+    "os"
+    "path/filepath"
+    "strings"
 
-	"github.com/iMithrellas/tarragon/internal/db"
-	"github.com/spf13/pflag"
-	"github.com/spf13/viper"
+    "github.com/iMithrellas/tarragon/internal/db"
+    "github.com/spf13/viper"
 )
 
 type ConfigFormat string
@@ -64,40 +63,7 @@ func GetConfigOptions() []ConfigOption {
 	}
 }
 
-// BindFlags binds configuration options from GetConfigOptions to command-line flags and adds additional flags.
-func BindFlags() {
-	options := GetConfigOptions()
-
-	for _, opt := range options {
-		switch v := opt.Value.(type) {
-		case bool:
-			pflag.Bool(opt.Key, v, opt.Comment)
-		case string:
-			pflag.String(opt.Key, v, opt.Comment)
-		case int:
-			pflag.Int(opt.Key, v, opt.Comment)
-		case int64:
-			pflag.Int64(opt.Key, v, opt.Comment)
-		case float64:
-			pflag.Float64(opt.Key, v, opt.Comment)
-		default:
-			fmt.Fprintf(os.Stderr, "Warning: unsupported type for flag %s\n", opt.Key)
-		}
-	}
-
-	// Additional flags not in config file
-	pflag.BoolP("daemon", "d", false, "Run in daemon mode")
-	pflag.BoolP("tui", "t", false, "Run the text-based user interface")
-	pflag.BoolP("gui", "g", false, "Run the graphical user interface")
-	pflag.BoolP("config-generate", "", false, "(re)Generate default config file")
-	pflag.String("config-format", "toml", "Config format (toml, yaml, json, ini)")
-	pflag.String("config-path", "", "Config path (overrides default)")
-	pflag.Parse()
-
-	pflag.Visit(func(f *pflag.Flag) {
-		viper.BindPFlag(f.Name, f)
-	})
-}
+// Flag binding moved to CLI layer (internal/cli). This package no longer binds flags.
 
 func SetupEnvironment() {
 	viper.AutomaticEnv()
@@ -151,14 +117,16 @@ func LoadConfig(configDir string) error {
 		viper.SetConfigType("toml")
 	}
 
-	if err := viper.ReadInConfig(); err != nil {
-		return fmt.Errorf("error reading config file: %w", err)
-	}
+    if err := viper.ReadInConfig(); err != nil {
+        return fmt.Errorf("error reading config file: %w", err)
+    }
 
-	SetupEnvironment()
-	BindFlags()
+    // Remove JSON comments key if present
+    viper.Set("_comments", nil)
 
-	return nil
+    SetupEnvironment()
+
+    return nil
 }
 
 // InitConfig handles config initialization: generation if requested, 

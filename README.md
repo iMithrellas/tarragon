@@ -68,6 +68,48 @@ icon = "calc.png"  # Optional: Icon path
 Moved to GitHub issue: Roadmap — https://github.com/iMithrellas/tarragon/issues/4
 
 
+## Shell Completions
+
+Generate completion scripts to a user-writable data dir and source them from your shell config.
+
+- Target directory: `$XDG_DATA_HOME/tarragon/completions` (fallback: `~/.local/share/tarragon/completions`)
+
+Generate
+
+- All shells (prints per-shell sourcing hints):
+```
+tarragon completion generate
+```
+
+- Specific shells:
+```
+tarragon completion generate bash
+tarragon completion generate zsh fish
+```
+
+Source in your shell config
+
+- Bash (add to `~/.bashrc`):
+```
+source "${XDG_DATA_HOME:-$HOME/.local/share}/tarragon/completions/tarragon.bash"
+```
+
+- Zsh (add to `~/.zshrc`):
+```
+source "${XDG_DATA_HOME:-$HOME/.local/share}/tarragon/completions/tarragon.zsh"
+```
+
+- Fish (add to `~/.config/fish/config.fish`):
+```
+source (string join '' $XDG_DATA_HOME '/tarragon/completions/tarragon.fish' ^/dev/null); or source ~/.local/share/tarragon/completions/tarragon.fish
+```
+
+- PowerShell (add to `$PROFILE`):
+```
+if ($env:XDG_DATA_HOME) { . "$env:XDG_DATA_HOME/tarragon/completions/tarragon.ps1" } else { . "$HOME/.local/share/tarragon/completions/tarragon.ps1" }
+```
+
+
 ## Flowchart
 
 ```mermaid

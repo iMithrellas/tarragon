@@ -5,7 +5,8 @@ go 1.24.1
 require (
 	github.com/go-zeromq/zmq4 v0.17.0
 	github.com/pelletier/go-toml/v2 v2.2.3
-	github.com/spf13/pflag v1.0.6
+	github.com/spf13/cobra v1.10.1
+	github.com/spf13/pflag v1.0.9
 	github.com/spf13/viper v1.20.1
 	gopkg.in/ini.v1 v1.67.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -18,6 +19,7 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.2.1 // indirect
 	github.com/go-zeromq/goczmq/v4 v4.2.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
