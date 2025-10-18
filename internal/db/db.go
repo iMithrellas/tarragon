@@ -17,21 +17,21 @@ type DB struct {
 	SQL *sql.DB
 }
 
-// DefaultPath returns the default SQLite DB path under XDG data dir.
-// Example: ~/.local/share/tarragon/tarragon.db
+// DefaultPath returns the default SQLite DB path under XDG *state* dir.
+// Example: ~/.local/state/tarragon/tarragon.db
 func DefaultPath() string {
-	if xdg := os.Getenv("XDG_DATA_HOME"); xdg != "" {
+	if xdg := os.Getenv("XDG_STATE_HOME"); xdg != "" {
 		return filepath.Join(xdg, "tarragon", "tarragon.db")
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "tarragon.db"
 	}
-	return filepath.Join(home, ".local", "share", "tarragon", "tarragon.db")
+	return filepath.Join(home, ".local", "state", "tarragon", "tarragon.db")
 }
 
 // Open opens (and initializes) the SQLite database at path.
-// If path is empty, it uses DefaultPath().
+// If path is empty (or explicitly ""), it uses DefaultPath().
 func Open(path string) (*DB, error) {
 	if path == "" {
 		path = DefaultPath()
@@ -43,8 +43,13 @@ func Open(path string) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
-	// Pragmas to improve robustness for an app DB.
-	if _, err := sqlDB.Exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; PRAGMA synchronous=NORMAL;`); err != nil {
+	// Pragmas tuned for app DB use.
+	if _, err := sqlDB.Exec(`
+		PRAGMA journal_mode=WAL;
+		PRAGMA foreign_keys=ON;
+		PRAGMA busy_timeout=5000;
+		PRAGMA synchronous=NORMAL;
+	`); err != nil {
 		_ = sqlDB.Close()
 		return nil, fmt.Errorf("set pragmas: %w", err)
 	}
@@ -56,55 +61,72 @@ func Open(path string) (*DB, error) {
 	return d, nil
 }
 
-// Init applies the minimal schema used by Tarragon.
-// It creates tables for frecency and JSON metrics.
+// Init applies/updates the schema used by Tarragon.
+// - Uses a schema_version table for simple migrations.
+// - Frecency table uses (plugin,value,context) composite PK with nullable wildcards.
 func (d *DB) Init(ctx context.Context) error {
 	if d == nil || d.SQL == nil {
 		return errors.New("nil DB")
 	}
-	stmts := []string{
-		// Optional schema versioning table for future migrations.
-		`CREATE TABLE IF NOT EXISTS schema_version (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            version INTEGER NOT NULL
-        );`,
-		`INSERT INTO schema_version (id, version)
-            SELECT 1, 1 WHERE NOT EXISTS (SELECT 1 FROM schema_version WHERE id = 1);`,
 
-		// Frecency storage skeleton. Exact scoring policy left to caller.
-		`CREATE TABLE IF NOT EXISTS frecency (
-            key TEXT PRIMARY KEY,
-            category TEXT NOT NULL DEFAULT '',
-            count INTEGER NOT NULL DEFAULT 0,
-            last_seen_ts INTEGER NOT NULL DEFAULT 0,
-            last_exec_ts INTEGER NOT NULL DEFAULT 0,
-            score REAL NOT NULL DEFAULT 0.0
-        );`,
-		`CREATE INDEX IF NOT EXISTS idx_frecency_score ON frecency(score DESC);`,
-		`CREATE INDEX IF NOT EXISTS idx_frecency_category ON frecency(category);`,
-
-		// JSON metrics sink: arbitrary JSON payloads with a type tag and timestamp.
-		`CREATE TABLE IF NOT EXISTS metrics (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ts INTEGER NOT NULL,
-            type TEXT NOT NULL,
-            data TEXT NOT NULL
-        );`,
-		`CREATE INDEX IF NOT EXISTS idx_metrics_type_ts ON metrics(type, ts DESC);`,
-	}
 	tx, err := d.SQL.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
-	defer func() {
-		// In case of panic, rollback.
-		_ = tx.Rollback()
-	}()
+	defer func() { _ = tx.Rollback() }()
+
+	// Ensure schema_version row exists
+	if _, err := tx.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS schema_version (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			version INTEGER NOT NULL
+		);
+		INSERT INTO schema_version (id, version)
+		SELECT 1, 0
+		WHERE NOT EXISTS (SELECT 1 FROM schema_version WHERE id = 1);
+	`); err != nil {
+		return fmt.Errorf("schema_version init: %w", err)
+	}
+
+	// Read current version
+	var ver int
+	if err := tx.QueryRowContext(ctx, `SELECT version FROM schema_version WHERE id=1`).Scan(&ver); err != nil {
+		return fmt.Errorf("read schema_version: %w", err)
+	}
+
+	// Create (or ensure) current tables (idempotent)
+	stmts := []string{
+		// Frecency (multi-parameter, nullable wildcards).
+		`CREATE TABLE IF NOT EXISTS frecency (
+			plugin        TEXT,                   -- NULL = wildcard
+			value         TEXT,                   -- NULL = wildcard
+			context       TEXT,                   -- NULL = wildcard
+			score         REAL    NOT NULL DEFAULT 0.0, -- lazily decayed score
+			updated_at    INTEGER NOT NULL DEFAULT 0,   -- unix seconds when score last decayed
+			last_seen_ts  INTEGER NOT NULL DEFAULT 0,
+			last_exec_ts  INTEGER NOT NULL DEFAULT 0,
+			exec_count    INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (plugin, value, context)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_frecency_plugin ON frecency(plugin);`,
+		`CREATE INDEX IF NOT EXISTS idx_frecency_value  ON frecency(value);`,
+		`CREATE INDEX IF NOT EXISTS idx_frecency_ctx    ON frecency(context);`,
+
+		// Metrics sink
+		`CREATE TABLE IF NOT EXISTS metrics (
+			id   INTEGER PRIMARY KEY AUTOINCREMENT,
+			ts   INTEGER NOT NULL,
+			type TEXT    NOT NULL,
+			data TEXT    NOT NULL
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_metrics_type_ts ON metrics(type, ts DESC);`,
+	}
 	for _, s := range stmts {
 		if _, err := tx.ExecContext(ctx, s); err != nil {
 			return fmt.Errorf("migrate: %w", err)
 		}
 	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
@@ -120,7 +142,6 @@ func (d *DB) Close() error {
 }
 
 // InsertMetric stores a JSON metric with the provided type tag and current timestamp.
-// Data must be a JSON string; use json.Marshal for structured values.
 func (d *DB) InsertMetric(ctx context.Context, typ string, jsonData string) error {
 	if d == nil || d.SQL == nil {
 		return errors.New("nil DB")

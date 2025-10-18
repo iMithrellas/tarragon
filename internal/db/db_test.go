@@ -43,7 +43,7 @@ func TestOpenCreatesSchemaAtPath(t *testing.T) {
 func TestOpenDefaultPathUsesXDG(t *testing.T) {
 	dir := t.TempDir()
 	// Ensure XDG_DATA_HOME directs DefaultPath()
-	t.Setenv("XDG_DATA_HOME", dir)
+	t.Setenv("XDG_STATE_HOME", dir)
 	def := DefaultPath()
 	// Sanity: must live under our temp dir
 	if got, want := filepath.Dir(filepath.Dir(def)), dir; got != want && filepath.Dir(def) != dir {
