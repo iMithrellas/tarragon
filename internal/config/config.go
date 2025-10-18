@@ -2,30 +2,101 @@
 package config
 
 import (
-    "fmt"
-    "github.com/iMithrellas/tarragon/internal/db"
-    "github.com/spf13/pflag"
-    "github.com/spf13/viper"
-    "os"
-    "path/filepath"
-    "strings"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/iMithrellas/tarragon/internal/db"
+	"github.com/spf13/pflag"
+	"github.com/spf13/viper"
 )
 
+type ConfigFormat string
+
+const (
+	FormatTOML ConfigFormat = "toml"
+	FormatYAML ConfigFormat = "yaml"
+	FormatJSON ConfigFormat = "json"
+	FormatINI  ConfigFormat = "ini"
+)
+
+type ConfigOption struct {
+	Key     string
+	Value   interface{}
+	Comment string
+}
+
+// GetConfigOptions returns the default configuration options
+func GetConfigOptions() []ConfigOption {
+	return []ConfigOption{
+		{
+			Key:     "run_tcp",
+			Value:   false,
+			Comment: "Enable TCP server",
+		},
+		{
+			Key:     "run_ipc",
+			Value:   true,
+			Comment: "Enable IPC server",
+		},
+		{
+			Key:     "port",
+			Value:   "5555",
+			Comment: "TCP port to listen on",
+		},
+		{
+			Key:     "tuidebounce",
+			Value:   200,
+			Comment: "TUI debounce interval in milliseconds",
+		},
+		{
+			Key:     "max_aggregates",
+			Value:   64,
+			Comment: "Maximum number of aggregates to maintain",
+		},
+		{
+			Key:     "db_path",
+			Value:   db.DefaultPath(),
+			Comment: "Path to the database file",
+		},
+	}
+}
+
+// BindFlags binds configuration options from GetConfigOptions to command-line flags and adds additional flags.
 func BindFlags() {
-    pflag.Bool("run_tcp", false, "Run with TCP")
-    pflag.Bool("run_ipc", false, "Run with IPC")
-    pflag.String("port", "", "Port number")
-    pflag.Int("tuidebounce", 0, "Debounce duration for TUI in ms(e.g., 300)")
-    pflag.String("db_path", "", "Path to the SQLite database file (defaults to XDG_DATA_HOME or ~/.local/share/tarragon/tarragon.db)")
-    pflag.BoolP("daemon", "d", false, "Run in daemon mode")
-    pflag.BoolP("tui", "t", false, "Run with text-based user interface")
-    pflag.BoolP("gui", "g", false, "Run with graphical user interface")
-    pflag.Parse()
+	options := GetConfigOptions()
+
+	for _, opt := range options {
+		switch v := opt.Value.(type) {
+		case bool:
+			pflag.Bool(opt.Key, v, opt.Comment)
+		case string:
+			pflag.String(opt.Key, v, opt.Comment)
+		case int:
+			pflag.Int(opt.Key, v, opt.Comment)
+		case int64:
+			pflag.Int64(opt.Key, v, opt.Comment)
+		case float64:
+			pflag.Float64(opt.Key, v, opt.Comment)
+		default:
+			fmt.Fprintf(os.Stderr, "Warning: unsupported type for flag %s\n", opt.Key)
+		}
+	}
+
+	// Additional flags not in config file
+	pflag.BoolP("daemon", "d", false, "Run in daemon mode")
+	pflag.BoolP("tui", "t", false, "Run the text-based user interface")
+	pflag.BoolP("gui", "g", false, "Run the graphical user interface")
+	pflag.BoolP("config-generate", "", false, "(re)Generate default config file")
+	pflag.String("config-format", "toml", "Config format (toml, yaml, json, ini)")
+	pflag.String("config-path", "", "Config path (overrides default)")
+	pflag.Parse()
 
 	pflag.Visit(func(f *pflag.Flag) {
 		viper.BindPFlag(f.Name, f)
 	})
-
 }
 
 func SetupEnvironment() {
@@ -33,14 +104,52 @@ func SetupEnvironment() {
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 }
 
-func LoadConfig(path string) error {
+func FindConfigFile(dir string) (string, error) {
+	formats := []string{"toml", "yaml", "yml", "json", "ini"}
+	baseName := "tarragon"
+
+	var found []string
+	for _, ext := range formats {
+		path := filepath.Join(dir, fmt.Sprintf("%s.%s", baseName, ext))
+		if _, err := os.Stat(path); err == nil {
+			found = append(found, path)
+		}
+	}
+
+	if len(found) == 0 {
+		return "", fmt.Errorf("no config file found in %s", dir)
+	}
+
+	if len(found) > 1 {
+		fmt.Fprintf(os.Stderr, "Warning: Multiple config files found:\n")
+		for _, f := range found {
+			fmt.Fprintf(os.Stderr, "  - %s\n", f)
+		}
+		fmt.Fprintf(os.Stderr, "Using: %s\n\n", found[0])
+	}
+
+	return found[0], nil
+}
+
+func LoadConfig(configDir string) error {
+	path, err := FindConfigFile(configDir)
+	if err != nil {
+		return err
+	}
+
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("error creating config directory: %w", err)
 	}
 
 	viper.SetConfigFile(path)
-	viper.SetConfigType("toml")
+
+	ext := strings.TrimPrefix(filepath.Ext(path), ".")
+	if ext != "" {
+		viper.SetConfigType(ext)
+	} else {
+		viper.SetConfigType("toml")
+	}
 
 	if err := viper.ReadInConfig(); err != nil {
 		return fmt.Errorf("error reading config file: %w", err)
@@ -52,7 +161,51 @@ func LoadConfig(path string) error {
 	return nil
 }
 
-func GenerateConfig(path string) error {
+// InitConfig handles config initialization: generation if requested, 
+// loading existing config, or auto-generating default if none exists
+func InitConfig(configDir string, regenerate bool, format string) error {
+	// Handle explicit config generation request
+	if regenerate {
+		configFormat := ConfigFormat(strings.ToLower(format))
+		configPath := filepath.Join(
+			configDir,
+			fmt.Sprintf("tarragon.%s", configFormat),
+		)
+		if err := GenerateConfig(configPath, configFormat); err != nil {
+			return fmt.Errorf("failed to generate config: %w", err)
+		}
+		fmt.Printf("Config generated at: %s\n", configPath)
+		// Return a special sentinel error to indicate we should exit
+		return ErrConfigGenerated
+	}
+
+	// Try to load existing config
+	if err := LoadConfig(configDir); err != nil {
+		// If no config exists, auto-generate a default one
+		if strings.Contains(err.Error(), "no config file found") {
+			fmt.Fprintln(os.Stderr, 
+				"No config file found, generating default...")
+			configPath := filepath.Join(configDir, "tarragon.toml")
+			if err := GenerateConfig(configPath, FormatTOML); err != nil {
+				return fmt.Errorf(
+					"failed to generate default config: %w", err)
+			}
+			// Try loading the newly generated config
+			if err := LoadConfig(configDir); err != nil {
+				return fmt.Errorf("failed to load generated config: %w", err)
+			}
+		} else {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// ErrConfigGenerated is returned when config is generated on user request
+var ErrConfigGenerated = fmt.Errorf("config generated successfully")
+
+func GenerateConfig(path string, format ConfigFormat) error {
 	if _, err := os.Stat(path); err == nil {
 		return nil
 	} else if !os.IsNotExist(err) {
@@ -64,20 +217,111 @@ func GenerateConfig(path string) error {
 		return fmt.Errorf("error creating config directory: %w", err)
 	}
 
-	viper.SetConfigFile(path)
-	viper.SetConfigType("toml")
+	options := GetConfigOptions()
 
-	viper.Set("run_tcp", false)
-    viper.Set("run_ipc", true)
-    viper.Set("port", "5555")
-    viper.Set("tuidebounce", 200)
-    viper.Set("max_aggregates", 64)
-    viper.Set("db_path", db.DefaultPath())
+	var content string
+	var err error
 
-	if err := viper.WriteConfigAs(path); err != nil {
+	switch format {
+	case FormatTOML:
+		content = generateTOML(options)
+	case FormatYAML:
+		content = generateYAML(options)
+	case FormatJSON:
+		content, err = generateJSON(options)
+		if err != nil {
+			return fmt.Errorf("error generating JSON: %w", err)
+		}
+	case FormatINI:
+		content = generateINI(options)
+	default:
+		return fmt.Errorf("unsupported format: %s", format)
+	}
+
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		return fmt.Errorf("error writing config file: %w", err)
 	}
 
-	viper.Reset()
 	return nil
+}
+
+func generateTOML(options []ConfigOption) string {
+	var sb strings.Builder
+	for _, opt := range options {
+		sb.WriteString(fmt.Sprintf("# %s\n", opt.Comment))
+		sb.WriteString(formatTOMLValue(opt.Key, opt.Value))
+		sb.WriteString("\n\n")
+	}
+	return sb.String()
+}
+
+func generateYAML(options []ConfigOption) string {
+	var sb strings.Builder
+	for _, opt := range options {
+		sb.WriteString(fmt.Sprintf("# %s\n", opt.Comment))
+		sb.WriteString(formatYAMLValue(opt.Key, opt.Value))
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+func generateJSON(options []ConfigOption) (string, error) {
+	config := make(map[string]interface{})
+	comments := make(map[string]string)
+
+	for _, opt := range options {
+		config[opt.Key] = opt.Value
+		comments[opt.Key] = opt.Comment
+	}
+
+	// JSON doesn't support comments natively, so we use a _comments field
+	result := map[string]interface{}{
+		"_comments": comments,
+	}
+	for k, v := range config {
+		result[k] = v
+	}
+
+	data, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func generateINI(options []ConfigOption) string {
+	var sb strings.Builder
+	sb.WriteString("[default]\n")
+	for _, opt := range options {
+		sb.WriteString(fmt.Sprintf("; %s\n", opt.Comment))
+		sb.WriteString(formatINIValue(opt.Key, opt.Value))
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+func formatTOMLValue(key string, value interface{}) string {
+	switch v := value.(type) {
+	case string:
+		return fmt.Sprintf("%s = \"%s\"", key, v)
+	case bool, int, int64, float64:
+		return fmt.Sprintf("%s = %v", key, v)
+	default:
+		return fmt.Sprintf("%s = \"%v\"", key, v)
+	}
+}
+
+func formatYAMLValue(key string, value interface{}) string {
+	switch v := value.(type) {
+	case string:
+		return fmt.Sprintf("%s: \"%s\"", key, v)
+	case bool, int, int64, float64:
+		return fmt.Sprintf("%s: %v", key, v)
+	default:
+		return fmt.Sprintf("%s: \"%v\"", key, v)
+	}
+}
+
+func formatINIValue(key string, value interface{}) string {
+	return fmt.Sprintf("%s = %v", key, value)
 }
