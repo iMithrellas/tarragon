@@ -1,244 +1,464 @@
 package ui
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
-	"strconv"
-	"strings"
+	"os/signal"
 	"sync"
 	"time"
 
 	"github.com/go-zeromq/zmq4"
 	"github.com/iMithrellas/tarragon/internal/wire"
+	"github.com/spf13/viper"
+	"golang.org/x/sys/unix"
 )
 
 // choice represents a selectable suggestion from a plugin.
 type choice struct{ ID, Label string }
 
+// item is a flattened selectable row tagged with plugin source.
+type item struct {
+	Plugin string
+	Choice choice
+}
+
+// RunTUI launches a minimal interactive TUI without external deps.
 func RunTUI() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// session client ID (time component is sufficient)
-	clientID := fmt.Sprintf("cli-%d", time.Now().UnixNano())
-
-	// REQ socket for starting queries and detach
-	req := zmq4.NewReq(ctx)
-	if err := req.Dial(wire.EndpointUIReq); err != nil {
-		fmt.Fprintf(os.Stderr, "connect error (REQ): %v\n", err)
-		os.Exit(1)
+	t := &tui{
+		ctx:      context.Background(),
+		clientID: fmt.Sprintf("cli-%d", time.Now().UnixNano()),
+		debounce: func() int {
+			if d := viper.GetInt("tuidebounce"); d > 0 {
+				return d
+			}
+			return 200
+		}(),
+		active: make(map[string]struct{}),
+		winch:  make(chan os.Signal, 1),
+		done:   make(chan struct{}),
 	}
-	defer func() { _ = req.Close() }()
-
-	// SUB socket for receiving updates.
-	sub := zmq4.NewSub(ctx)
-	if err := sub.Dial(wire.EndpointUISub); err != nil {
-		fmt.Fprintf(os.Stderr, "connect error (SUB): %v\n", err)
-		os.Exit(1)
+	if err := t.initSockets(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return
 	}
-	defer func() { _ = sub.Close() }()
+	defer t.closeSockets()
+	if err := t.initTerminal(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return
+	}
+	defer t.restoreTerminal()
+	signal.Notify(t.winch, unix.SIGWINCH)
+	t.loop()
+}
 
-	// background receiver
-	var subMu sync.Mutex
-	active := make(map[string]struct{})
-	lastLines := 0
-	doneCh := make(chan struct{})
-	// track last ack id and last plugin list for selection
-	var lastQID string
-	var lastPlugins []string
-	// choices extracted per plugin from latest snapshot
-	lastChoices := make(map[string][]choice)
-	go func() {
-		for {
-			select {
-			case <-doneCh:
-				return
-			default:
-			}
-			msg, err := sub.Recv()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "update recv error: %v\n", err)
-				return
-			}
-			if len(msg.Frames) < 2 {
-				continue
-			}
-			subMu.Lock()
-			_, ok := active[string(msg.Frames[0])]
-			subMu.Unlock()
-			if !ok {
-				continue
-			}
-			var upd wire.UpdateMessage
-			if err := json.Unmarshal(msg.Frames[1], &upd); err != nil {
-				fmt.Fprintf(os.Stderr, "update parse error: %v\n", err)
-				continue
-			}
-			// Try to extract plugin names from aggregate payload
-			type aggView struct {
-				QueryID string                     `json:"query_id"`
-				Results map[string]json.RawMessage `json:"results"`
-			}
-			var view aggView
-			_ = json.Unmarshal(upd.Payload, &view)
-			if view.QueryID != "" {
-				lastQID = view.QueryID
-				lastPlugins = lastPlugins[:0]
-				for name, raw := range view.Results {
-					lastPlugins = append(lastPlugins, name)
-					lastChoices[name] = extractChoices(raw)
-				}
-			}
-			pretty, _ := json.MarshalIndent(json.RawMessage(upd.Payload), "", "  ")
-			// Replace previous snapshot with the new one using ANSI.
-			s := string(pretty)
-			lines := 1
-			for i := 0; i < len(s); i++ {
-				if s[i] == '\n' {
-					lines++
-				}
-			}
-			// Save cursor, move to start of block, clear, print, restore.
-			// Best-effort: may interfere with the prompt while typing.
-			fmt.Print("\0337") // save cursor
-			if lastLines > 0 {
-				// Move to beginning of the block located lastLines above.
-				fmt.Printf("\r\033[%dA", lastLines)
-				// Clear lastLines lines.
-				for i := 0; i < lastLines; i++ {
-					fmt.Print("\033[2K") // clear line
-					if i < lastLines-1 {
-						fmt.Print("\033[1B")
-					} // move down
-				}
-				// Move back to top of block.
-				if lastLines > 1 {
-					fmt.Printf("\033[%dA", lastLines-1)
-				}
-			}
-			fmt.Print(s)
-			if !strings.HasSuffix(s, "\n") {
-				fmt.Print("\n")
-			}
-			if len(lastPlugins) > 0 {
-				fmt.Printf("plugins: %s\n", strings.Join(lastPlugins, ", "))
-				for _, p := range lastPlugins {
-					chs := lastChoices[p]
-					if len(chs) == 0 {
-						continue
-					}
-					fmt.Printf("  %s:\n", p)
-					for i, c := range chs {
-						if c.Label == "" {
-							c.Label = c.ID
-						}
-						fmt.Printf("    [%d] %s (id=%s)\n", i, c.Label, c.ID)
-					}
-				}
-			}
-			lastLines = lines
-			fmt.Print("\0338") // restore cursor
-		}
-	}()
+type tui struct {
+	ctx             context.Context
+	req, sub        zmq4.Socket
+	clientID        string
+	input, lastSent string
+	lastQID         string
+	rows            []item
+	sel, top        int
+	pendingAt       time.Time
+	debounce        int
+	active          map[string]struct{}
+	subMu, renderMu sync.Mutex
+	winch           chan os.Signal
+	done            chan struct{}
+	orig            *unix.Termios
+}
 
-	in := bufio.NewReader(os.Stdin)
-	fmt.Println("tarragon-cli: type a query and press Enter. Commands: :q quit, :sel <plugin>")
-	for {
-		fmt.Print("> ")
-		line, err := in.ReadString('\n')
-		if err != nil {
-			fmt.Println()
-			break
-		}
-		query := strings.TrimSpace(line)
-		if query == "" {
-			continue
-		}
-		switch strings.ToLower(query) {
-		case ":q", "q", "quit", "exit":
-			// best-effort detach
-			reqBody, _ := json.Marshal(&wire.UIRequest{Type: "detach", ClientID: clientID})
-			_ = req.Send(zmq4.NewMsg(reqBody))
-			_, _ = req.Recv()
-			close(doneCh)
-			return
-		}
-
-		if strings.HasPrefix(strings.ToLower(query), ":sel ") {
-			args := strings.Fields(query)
-			if len(args) < 2 {
-				fmt.Fprintln(os.Stderr, "usage: :sel <plugin> [index|id]")
-				continue
-			}
-			pname := args[1]
-			if pname == "" || lastQID == "" {
-				fmt.Fprintln(os.Stderr, "no selection available or missing plugin")
-				continue
-			}
-			// Determine selection token to send (id preferred)
-			var token string
-			if len(args) >= 3 {
-				idxOrID := args[2]
-				// try index
-				if i, err := atoi(idxOrID); err == nil {
-					chs := lastChoices[pname]
-					if i >= 0 && i < len(chs) {
-						token = chs[i].ID
-					}
-				}
-				if token == "" {
-					token = idxOrID
-				}
-			}
-			reqBody, _ := json.Marshal(&wire.UIRequest{Type: "select", ClientID: clientID, QueryID: lastQID, Plugin: pname, Text: token})
-			if err := req.Send(zmq4.NewMsg(reqBody)); err != nil {
-				fmt.Fprintf(os.Stderr, "send select error: %v\n", err)
-				continue
-			}
-			_, _ = req.Recv() // ack ok
-			fmt.Printf("sent selection to %s for %s (token=%s)\n", pname, lastQID, token)
-			continue
-		}
-
-		// send JSON query
-		reqBody, _ := json.Marshal(&wire.UIRequest{Type: "query", ClientID: clientID, Text: query})
-		if err := req.Send(zmq4.NewMsg(reqBody)); err != nil {
-			fmt.Fprintf(os.Stderr, "send error: %v\n", err)
-			continue
-		}
-
-		// expect ack and subscribe to topic
-		reply, err := req.Recv()
-		if err != nil || len(reply.Frames) == 0 {
-			fmt.Fprintf(os.Stderr, "ack error: %v\n", err)
-			continue
-		}
-		var ack wire.AckMessage
-		if err := json.Unmarshal(reply.Frames[0], &ack); err != nil || ack.QueryID == "" {
-			fmt.Fprintf(os.Stderr, "ack parse error: %v\n", err)
-			continue
-		}
-		subMu.Lock()
-		for t := range active {
-			_ = sub.SetOption(zmq4.OptionUnsubscribe, t)
-		}
-		active = make(map[string]struct{})
-		lastLines = 0
-		_ = sub.SetOption(zmq4.OptionSubscribe, ack.QueryID)
-		active[ack.QueryID] = struct{}{}
-		subMu.Unlock()
-		fmt.Printf("listening for updates id=%s...\n", ack.QueryID)
+func (t *tui) initSockets() error {
+	t.req = zmq4.NewReq(t.ctx)
+	if err := t.req.Dial(wire.EndpointUIReq); err != nil {
+		return fmt.Errorf("connect REQ: %w", err)
+	}
+	t.sub = zmq4.NewSub(t.ctx)
+	if err := t.sub.Dial(wire.EndpointUISub); err != nil {
+		return fmt.Errorf("connect SUB: %w", err)
+	}
+	return nil
+}
+func (t *tui) closeSockets() {
+	if t.req != nil {
+		_ = t.req.Close()
+	}
+	if t.sub != nil {
+		_ = t.sub.Close()
 	}
 }
 
-// atoi is a tiny helper that parses an int without importing strconv at top-level
-func atoi(s string) (int, error) { return strconv.Atoi(s) }
+func (t *tui) initTerminal() error {
+	var err error
+	if t.orig, err = enableRaw(); err != nil {
+		return fmt.Errorf("enable raw: %w", err)
+	}
+	enterAltScreen()
+	hideCursor()
+	return nil
+}
+func (t *tui) restoreTerminal() { showCursor(); exitAltScreen(); restoreTerm(t.orig) }
+
+func (t *tui) loop() {
+	// updates
+	go t.recvUpdates()
+	// debounced sender
+	go t.debounceSender()
+	// initial frame
+	t.renderMu.Lock()
+	redraw(t.input, t.rows, t.sel, t.top, t.lastQID)
+	t.renderMu.Unlock()
+
+	// key loop
+	rd := os.Stdin
+	buf := make([]byte, 8)
+	for {
+		select {
+		case <-t.winch:
+			t.render()
+		default:
+		}
+		n, err := rd.Read(buf[:1])
+		if err != nil {
+			if err != io.EOF {
+				fmt.Fprintf(os.Stderr, "read: %v\n", err)
+			}
+			break
+		}
+		if n == 0 {
+			continue
+		}
+		b := buf[0]
+		if b == 0x1b { // ESC sequences
+			if _, err := rd.Read(buf[:1]); err == nil && buf[0] == '[' {
+				if _, err := rd.Read(buf[:1]); err == nil {
+					switch buf[0] {
+					case 'A':
+						t.moveSel(-1)
+					case 'B':
+						t.moveSel(1)
+					}
+				}
+			}
+			continue
+		}
+		switch b {
+		case 3, 4: // Ctrl-C/D
+			t.detach()
+			close(t.done)
+			fmt.Println("\r")
+			return
+		case 13, 10: // Enter
+			if t.sel >= 0 && t.sel < len(t.rows) && t.lastQID != "" {
+				t.sendSelect(t.rows[t.sel])
+			} else if t.input != t.lastSent {
+				t.pendingAt = time.Now().Add(-time.Hour)
+			}
+			t.render()
+		case 127: // Backspace
+			if len(t.input) > 0 {
+				t.input = t.input[:len(t.input)-1]
+				t.pendingAt = time.Now()
+			}
+			t.sel, t.top = 0, 0
+			t.render()
+		default:
+			if b >= 32 && b <= 126 {
+				t.input += string(b)
+				t.pendingAt = time.Now()
+				t.sel, t.top = 0, 0
+				t.render()
+			}
+			if b == 'q' && t.input == "" {
+				t.detach()
+				close(t.done)
+				fmt.Println("\r")
+				return
+			}
+		}
+	}
+}
+
+func (t *tui) render() {
+	t.renderMu.Lock()
+	redraw(t.input, t.rows, t.sel, t.top, t.lastQID)
+	t.renderMu.Unlock()
+}
+func (t *tui) moveSel(delta int) {
+	if delta < 0 && t.sel > 0 {
+		t.sel--
+	} else if delta > 0 && t.sel+1 < len(t.rows) {
+		t.sel++
+	}
+	adjustViewport(&t.top, t.sel, t.rows)
+	t.render()
+}
+
+func (t *tui) recvUpdates() {
+	type aggView struct {
+		QueryID string                     `json:"query_id"`
+		Results map[string]json.RawMessage `json:"results"`
+	}
+	for {
+		select {
+		case <-t.done:
+			return
+		default:
+		}
+		msg, err := t.sub.Recv()
+		if err != nil || len(msg.Frames) < 2 {
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "recv: %v\n", err)
+			}
+			return
+		}
+		t.subMu.Lock()
+		_, ok := t.active[string(msg.Frames[0])]
+		t.subMu.Unlock()
+		if !ok {
+			continue
+		}
+		var upd wire.UpdateMessage
+		if json.Unmarshal(msg.Frames[1], &upd) != nil {
+			continue
+		}
+		var view aggView
+		if json.Unmarshal(upd.Payload, &view) != nil || view.QueryID == "" {
+			continue
+		}
+		t.lastQID = view.QueryID
+		var newRows []item
+		for name, raw := range view.Results {
+			for _, c := range extractChoices(raw) {
+				lab := c.Label
+				if lab == "" {
+					lab = c.ID
+				}
+				newRows = append(newRows, item{Plugin: name, Choice: choice{ID: c.ID, Label: lab}})
+			}
+		}
+		t.rows = newRows
+		if t.sel >= len(t.rows) {
+			t.sel = len(t.rows) - 1
+			if t.sel < 0 {
+				t.sel = 0
+			}
+		}
+		adjustViewport(&t.top, t.sel, t.rows)
+		t.render()
+	}
+}
+
+func (t *tui) debounceSender() {
+	for {
+		time.Sleep(25 * time.Millisecond)
+		if t.pendingAt.IsZero() || time.Since(t.pendingAt) < time.Duration(t.debounce)*time.Millisecond || t.input == t.lastSent {
+			if !t.pendingAt.IsZero() && t.input == t.lastSent {
+				t.pendingAt = time.Time{}
+			}
+			continue
+		}
+		// send query
+		body, _ := json.Marshal(&wire.UIRequest{Type: "query", ClientID: t.clientID, Text: t.input})
+		if err := t.req.Send(zmq4.NewMsg(body)); err != nil {
+			continue
+		}
+		reply, err := t.req.Recv()
+		if err != nil || len(reply.Frames) == 0 {
+			continue
+		}
+		var ack wire.AckMessage
+		if json.Unmarshal(reply.Frames[0], &ack) != nil || ack.QueryID == "" {
+			continue
+		}
+		t.subMu.Lock()
+		for topic := range t.active {
+			_ = t.sub.SetOption(zmq4.OptionUnsubscribe, topic)
+		}
+		t.active = make(map[string]struct{})
+		_ = t.sub.SetOption(zmq4.OptionSubscribe, ack.QueryID)
+		t.active[ack.QueryID] = struct{}{}
+		t.subMu.Unlock()
+		t.lastSent, t.rows, t.sel, t.top = t.input, nil, 0, 0
+		t.render()
+		t.pendingAt = time.Time{}
+	}
+}
+
+func (t *tui) sendSelect(it item) {
+	body, _ := json.Marshal(&wire.UIRequest{Type: "select", ClientID: t.clientID, QueryID: t.lastQID, Plugin: it.Plugin, Text: it.Choice.ID})
+	if err := t.req.Send(zmq4.NewMsg(body)); err == nil {
+		_, _ = t.req.Recv()
+	}
+}
+func (t *tui) detach() {
+	body, _ := json.Marshal(&wire.UIRequest{Type: "detach", ClientID: t.clientID})
+	_ = t.req.Send(zmq4.NewMsg(body))
+	_, _ = t.req.Recv()
+}
+
+// redraw prints the UI using alternate buffer with a responsive layout.
+func redraw(input string, rows []item, sel int, top int, qid string) {
+	// Clear and home
+	fmt.Print("\033[H\033[2J")
+	// Get terminal size
+	h, w := termSize()
+	if h < 5 {
+		h = 5
+	}
+	if w < 20 {
+		w = 20
+	}
+	// Header
+	title := "Tarragon TUI"
+	printLine(fmt.Sprintf("\033[1m%s\033[0m", title), w)
+	// Input line
+	qline := fmt.Sprintf("Query: %s", input)
+	printLine(truncate(qline, w), w)
+	printLine("", w)
+	// Results area height (reserve 1 line for status)
+	area := h - 4
+	if area < 1 {
+		area = 1
+	}
+	// Render rows within viewport
+	end := top + area
+	if end > len(rows) {
+		end = len(rows)
+	}
+	for i := top; i < end; i++ {
+		it := rows[i]
+		content := truncate(fmt.Sprintf("[%s] %s", it.Plugin, it.Choice.Label), w)
+		if i == sel {
+			printLine("\033[7m"+content+"\033[0m", w)
+		} else {
+			printLine(content, w)
+		}
+	}
+	// Fill blank lines if fewer than area
+	for i := end; i < top+area; i++ {
+		printLine("", w)
+	}
+	// Status line
+	more := 0
+	if len(rows) > end {
+		more = len(rows) - end
+	}
+	status := fmt.Sprintf("%d results%s • ↑/↓ move • Enter select • Ctrl-C quit", len(rows), func() string {
+		if more > 0 {
+			return fmt.Sprintf(" (+%d)", more)
+		}
+		return ""
+	}())
+	if qid != "" {
+		status = fmt.Sprintf("%s • id=%s", status, qid)
+	}
+	printLine(truncate(status, w), w)
+	// Move cursor to input end (row 2, col after prefix+input)
+	col := len("Query: ") + len(input) + 1
+	if col < 1 {
+		col = 1
+	}
+	if col > w {
+		col = w
+	}
+	fmt.Printf("\033[2;%dH", col)
+}
+
+func adjustViewport(top *int, sel int, rows []item) {
+	h, _ := termSize()
+	area := h - 4
+	if area < 1 {
+		area = 1
+	}
+	if sel < *top {
+		*top = sel
+	}
+	if sel >= *top+area {
+		*top = sel - area + 1
+	}
+	if *top < 0 {
+		*top = 0
+	}
+	if *top > len(rows) {
+		*top = len(rows)
+	}
+}
+
+func termSize() (h, w int) {
+	ws, err := unix.IoctlGetWinsize(int(os.Stdout.Fd()), unix.TIOCGWINSZ)
+	if err != nil || ws == nil || ws.Row == 0 || ws.Col == 0 {
+		return 24, 80
+	}
+	return int(ws.Row), int(ws.Col)
+}
+
+func truncate(s string, w int) string {
+	if w <= 0 {
+		return ""
+	}
+	if len(s) <= w {
+		return s
+	}
+	if w <= 1 {
+		return s[:w]
+	}
+	if w == 2 {
+		return s[:1] + "…"
+	}
+	return s[:w-1] + "…"
+}
+
+// (no table helpers in this variant)
+
+func enterAltScreen() { fmt.Print("\033[?1049h\033[H\033[2J") }
+func exitAltScreen()  { fmt.Print("\033[?1049l\033[0m") }
+func hideCursor()     { fmt.Print("\033[?25l") }
+func showCursor()     { fmt.Print("\033[?25h") }
+
+// Ensure each printed line starts at column 1 and ends with CRLF
+func printLine(s string, w int) {
+	if w > 0 {
+		s = truncate(s, w)
+	}
+	fmt.Print("\r")
+	fmt.Print(s)
+	fmt.Print("\r\n")
+}
+
+// enableRaw switches TTY to raw mode (Unix).
+func enableRaw() (*unix.Termios, error) {
+	fd := int(os.Stdin.Fd())
+	orig, err := unix.IoctlGetTermios(fd, unix.TCGETS)
+	if err != nil {
+		return nil, err
+	}
+	raw := *orig
+	raw.Iflag &^= unix.IGNBRK | unix.BRKINT | unix.PARMRK | unix.ISTRIP | unix.INLCR | unix.IGNCR | unix.ICRNL | unix.IXON
+	// Keep OPOST so that newlines and carriage returns behave consistently
+	raw.Lflag &^= unix.ECHO | unix.ECHONL | unix.ICANON | unix.ISIG | unix.IEXTEN
+	raw.Cflag &^= unix.CSIZE | unix.PARENB
+	raw.Cflag |= unix.CS8
+	raw.Cc[unix.VMIN] = 1
+	raw.Cc[unix.VTIME] = 0
+	if err := unix.IoctlSetTermios(fd, unix.TCSETS, &raw); err != nil {
+		return nil, err
+	}
+	return orig, nil
+}
+
+func restoreTerm(orig *unix.Termios) {
+	if orig == nil {
+		return
+	}
+	_ = unix.IoctlSetTermios(int(os.Stdin.Fd()), unix.TCSETS, orig)
+}
 
 // extractChoices tries to parse a plugin payload into a list of selectable items.
-// It supports a few common shapes to keep the testing UI useful:
+// It supports a few common shapes:
 // - { "suggestions": [ {"id":"...", "label"|"title"|"text":"..."}, ... ] }
 // - [ {"id":"...", ...}, ... ]
 // - [ "string", ... ] (id and label are the string)
@@ -252,12 +472,14 @@ func extractChoices(raw json.RawMessage) []choice {
 	if err := json.Unmarshal(raw, &wrap); err == nil && len(wrap.Data) > 0 {
 		raw = wrap.Data
 	}
-	// Try object with suggestions field
+	// Try object with suggestions/variants/items/choices fields
 	var obj map[string]json.RawMessage
 	if json.Unmarshal(raw, &obj) == nil {
-		if arr, ok := obj["suggestions"]; ok {
-			if chs := parseArrayChoices(arr); len(chs) > 0 {
-				return chs
+		for _, k := range []string{"suggestions", "variants", "items", "choices"} {
+			if arr, ok := obj[k]; ok {
+				if chs := parseArrayChoices(arr); len(chs) > 0 {
+					return chs
+				}
 			}
 		}
 	}
