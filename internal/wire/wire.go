@@ -14,6 +14,7 @@ const (
 	MsgHello    = "hello"
 	MsgRequest  = "request"
 	MsgResponse = "response"
+	MsgSelect   = "select"
 )
 
 // UIRequest is sent from UI to daemon over REQ.
@@ -22,6 +23,9 @@ type UIRequest struct {
 	Type     string `json:"type"`
 	ClientID string `json:"client_id,omitempty"`
 	Text     string `json:"text,omitempty"`
+	// Optional fields for actions such as selection
+	QueryID string `json:"query_id,omitempty"`
+	Plugin  string `json:"plugin,omitempty"`
 }
 
 // AckMessage is sent from daemon to UI after receiving a query.

@@ -82,6 +82,15 @@ func reqServer(ctx context.Context, endpoint, label string, mgr *plugins.Manager
 				ackBytes, _ := json.Marshal(map[string]any{"type": "ok"})
 				_ = rep.Send(zmq4.Msg{Frames: [][]byte{ackBytes}})
 				continue
+			case "select":
+				// Forward UI selection to the targeted plugin if connected
+				if parsed.Plugin != "" && parsed.QueryID != "" && registry.isConnected(parsed.Plugin) {
+					reqOut <- pluginRequest{name: parsed.Plugin, queryID: parsed.QueryID, text: parsed.Text, msgType: wire.MsgSelect}
+					log.Printf("[%s] selection forwarded plugin=%s qid=%s", label, parsed.Plugin, parsed.QueryID)
+				}
+				ackBytes, _ := json.Marshal(map[string]any{"type": "ok"})
+				_ = rep.Send(zmq4.Msg{Frames: [][]byte{ackBytes}})
+				continue
 			default:
 				// unknown type -> fall through as raw input
 			}

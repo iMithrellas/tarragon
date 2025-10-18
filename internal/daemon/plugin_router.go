@@ -49,6 +49,7 @@ type pluginRequest struct {
 	name    string
 	queryID string
 	text    string
+	msgType string
 }
 
 // startPluginRouter starts a ROUTER socket for plugins and returns
@@ -104,7 +105,11 @@ func startPluginRouter(ctx context.Context, store *aggregateStore) (chan<- plugi
 					log.Printf("[PLUGINS] drop request: plugin %s not connected", req.name)
 					continue
 				}
-				body, _ := json.Marshal(&wire.PluginRequest{Type: wire.MsgRequest, QueryID: req.queryID, Text: req.text})
+				msgType := req.msgType
+				if msgType == "" {
+					msgType = wire.MsgRequest
+				}
+				body, _ := json.Marshal(&wire.PluginRequest{Type: msgType, QueryID: req.queryID, Text: req.text})
 				if err := router.Send(zmq4.Msg{Frames: [][]byte{id, body}}); err != nil {
 					log.Printf("[PLUGINS] send to %s failed: %v", req.name, err)
 				} else {
