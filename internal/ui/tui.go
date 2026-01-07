@@ -199,8 +199,8 @@ func (t *tui) moveSel(delta int) {
 
 func (t *tui) recvUpdates() {
 	type aggView struct {
-		QueryID string                     `json:"query_id"`
-		Results map[string]json.RawMessage `json:"results"`
+		QueryID string            `json:"query_id"`
+		List    []wire.ResultItem `json:"list"`
 	}
 	for {
 		select {
@@ -231,14 +231,19 @@ func (t *tui) recvUpdates() {
 		}
 		t.lastQID = view.QueryID
 		var newRows []item
-		for name, raw := range view.Results {
-			for _, c := range extractChoices(raw) {
-				lab := c.Label
-				if lab == "" {
-					lab = c.ID
-				}
-				newRows = append(newRows, item{Plugin: name, Choice: choice{ID: c.ID, Label: lab}})
+		for _, it := range view.List {
+			id := it.ID
+			label := it.Label
+			if label == "" {
+				label = id
 			}
+			if id == "" {
+				id = label
+			}
+			if id == "" && label == "" {
+				continue
+			}
+			newRows = append(newRows, item{Plugin: it.Plugin, Choice: choice{ID: id, Label: label}})
 		}
 		t.rows = newRows
 		if t.sel >= len(t.rows) {

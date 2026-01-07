@@ -42,6 +42,14 @@ type UpdateMessage struct {
 	Payload []byte `json:"payload"`
 }
 
+// ResultItem represents a normalized suggestion for UI rendering.
+type ResultItem struct {
+	ID     string  `json:"id"`
+	Label  string  `json:"label,omitempty"`
+	Plugin string  `json:"plugin"`
+	Score  float64 `json:"score,omitempty"`
+}
+
 // PluginHello identifies the plugin to the daemon router.
 type PluginHello struct {
 	Type string `json:"type"` // "hello"
