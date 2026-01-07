@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -107,42 +108,85 @@ func reqServer(ctx context.Context, endpoint, label string, mgr *plugins.Manager
 		// Register aggregate for this query
 		store.create(qid, clientID, input)
 
+		// Resolve prefix targeting, if any.
+		targetName, targetText, hasTarget := resolvePrefixTarget(input, mgr)
+		if !hasTarget {
+			targetText = input
+		}
+
 		// Spawn a goroutine to route the query to connected plugins via ZMQ.
 		go func(q string, id string) {
 			// Give subscribers time to attach after ACK (slow joiner mitigation).
 			time.Sleep(250 * time.Millisecond)
 
-			targets := 0
 			for name, p := range mgr.Plugins {
 				if !p.Config.Enabled {
 					continue
 				}
+				if p.Config.Lifecycle == plugins.LifecycleOnCall {
+					continue
+				}
+				if p.Config.RequirePrefix && !hasTarget {
+					continue
+				}
+				if hasTarget && name != targetName {
+					continue
+				}
 				if registry.isConnected(name) {
 					reqOut <- pluginRequest{name: name, queryID: id, text: q}
-					targets++
 				}
 			}
 
-			// Fallback: execute on_call style if no connected plugins.
-			if targets == 0 {
-				for name, p := range mgr.Plugins {
-					if !p.Config.Enabled {
-						continue
-					}
-					t0 := time.Now()
-					pctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-					raw, err := invokeOnCall(pctx, p, q)
-					cancel()
-					if err != nil {
-						raw = json.RawMessage([]byte(fmt.Sprintf(`{"error":"%s"}`, escapeJSONString(err.Error()))))
-					}
-					if snap, ok := store.update(id, name, float64(time.Since(t0).Microseconds())/1000.0, raw); ok {
-						upd := wire.UpdateMessage{Type: "update", QueryID: id, Payload: json.RawMessage(snap)}
-						b, _ := json.Marshal(upd)
-						pubChan <- pubFrame{topic: id, payload: b}
-					}
+			// Execute on_call plugins for every query.
+			for name, p := range mgr.Plugins {
+				if !p.Config.Enabled || p.Config.Lifecycle != plugins.LifecycleOnCall {
+					continue
+				}
+				if p.Config.RequirePrefix && !hasTarget {
+					continue
+				}
+				if hasTarget && name != targetName {
+					continue
+				}
+				t0 := time.Now()
+				pctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+				raw, err := invokeOnCall(pctx, p, q)
+				cancel()
+				if err != nil {
+					raw = json.RawMessage([]byte(fmt.Sprintf(`{"error":"%s"}`, escapeJSONString(err.Error()))))
+				}
+				if snap, ok := store.update(id, name, float64(time.Since(t0).Microseconds())/1000.0, raw); ok {
+					upd := wire.UpdateMessage{Type: "update", QueryID: id, Payload: json.RawMessage(snap)}
+					b, _ := json.Marshal(upd)
+					pubChan <- pubFrame{topic: id, payload: b}
 				}
 			}
-		}(input, qid)
+		}(targetText, qid)
 	}
+}
+func resolvePrefixTarget(input string, mgr *plugins.Manager) (string, string, bool) {
+	text := strings.TrimSpace(input)
+	if text == "" {
+		return "", "", false
+	}
+	var targetName string
+	var targetPrefix string
+	for name, p := range mgr.Plugins {
+		if !p.Config.Enabled {
+			continue
+		}
+		prefix := strings.TrimSpace(p.Config.Prefix)
+		if prefix == "" {
+			continue
+		}
+		if strings.HasPrefix(text, prefix) && len(prefix) > len(targetPrefix) {
+			targetName = name
+			targetPrefix = prefix
+		}
+	}
+	if targetName == "" {
+		return "", "", false
+	}
+	trimmed := strings.TrimSpace(strings.TrimPrefix(text, targetPrefix))
+	return targetName, trimmed, true
 }

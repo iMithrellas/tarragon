@@ -31,6 +31,7 @@ type PluginConfig struct {
 
 	ProvidesGeneral bool     `toml:"provides_general_suggestions"`
 	Prefix          string   `toml:"prefix"`
+	RequirePrefix   bool     `toml:"require_prefix"`
 	BuildDeps       []string `toml:"build_dependencies"`
 	Capabilities    []string `toml:"capabilities"`
 	Icon            string   `toml:"icon"`

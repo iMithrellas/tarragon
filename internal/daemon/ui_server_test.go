@@ -23,7 +23,7 @@ func TestUIServer_AckAndSelectAndFallback(t *testing.T) {
 	plugName := "plug_oncall"
 	entry := writeScript(t, dir, "once.sh", "#!/usr/bin/env bash\nif [[ \"$1\" == \"--once\" ]]; then echo '{\"ok\":true,\"data\":\"pong\"}'; fi\n")
 	mgr := plugins.NewManager("-")
-	mgr.Plugins[plugName] = &plugins.Plugin{Dir: dir, Config: plugins.PluginConfig{Name: plugName, Entrypoint: filepath.Base(entry), Enabled: true}}
+	mgr.Plugins[plugName] = &plugins.Plugin{Dir: dir, Config: plugins.PluginConfig{Name: plugName, Entrypoint: filepath.Base(entry), Enabled: true, Lifecycle: plugins.LifecycleOnCall}}
 
 	store := newAggregateStore(10)
 	reqOut, registry := startPluginRouter(ctx, store) // start router for forwarding; we won't actually connect plugins here
