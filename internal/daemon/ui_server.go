@@ -138,6 +138,7 @@ func reqServer(ctx context.Context, endpoint, label string, mgr *plugins.Manager
 			}
 
 			// Execute on_call plugins for every query.
+			// TODO: consider limiting on_call execution to prefix-targeted queries.
 			for name, p := range mgr.Plugins {
 				if !p.Config.Enabled || p.Config.Lifecycle != plugins.LifecycleOnCall {
 					continue

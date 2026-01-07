@@ -19,6 +19,7 @@ func RunDaemon() {
 
 	pluginDir := plugins.DefaultDir()
 	mgr := plugins.NewManager(pluginDir)
+	// TODO: periodically rescan pluginDir for new plugins/config changes.
 	if err := mgr.Discover(); err != nil {
 		log.Printf("Plugin discovery error: %v", err)
 	}
