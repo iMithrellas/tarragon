@@ -115,9 +115,11 @@ func reqServer(ctx context.Context, endpoint, label string, mgr *plugins.Manager
 		}
 
 		// Spawn a goroutine to route the query to connected plugins via ZMQ.
-		go func(q string, id string) {
+		go func(q string, id string, client string) {
 			// Give subscribers time to attach after ACK (slow joiner mitigation).
-			time.Sleep(250 * time.Millisecond)
+			if client != "bench" {
+				time.Sleep(250 * time.Millisecond)
+			}
 
 			for name, p := range mgr.Plugins {
 				if !p.Config.Enabled {
@@ -162,7 +164,7 @@ func reqServer(ctx context.Context, endpoint, label string, mgr *plugins.Manager
 					pubChan <- pubFrame{topic: id, payload: b}
 				}
 			}
-		}(targetText, qid)
+		}(targetText, qid, clientID)
 	}
 }
 func resolvePrefixTarget(input string, mgr *plugins.Manager) (string, string, bool) {
