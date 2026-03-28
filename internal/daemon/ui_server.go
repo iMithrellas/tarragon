@@ -1,172 +1,232 @@
 package daemon
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/go-zeromq/zmq4"
 	"github.com/iMithrellas/tarragon/internal/plugins"
 	"github.com/iMithrellas/tarragon/internal/wire"
 )
 
 var querySeq uint64
 
-// reqServer handles UI REQ/REP and spawns goroutines to publish updates.
-func reqServer(ctx context.Context, endpoint, label string, mgr *plugins.Manager, reqOut chan<- pluginRequest, registry *pluginRegistry, store *aggregateStore) {
-	cleanupIPC(endpoint)
-	// Prepare PUB for updates on IPC by default. When using TCP, still publish on IPC updates endpoint.
-	cleanupIPC(wire.EndpointUISub)
+// uiClient tracks a connected UI.
+type uiClient struct {
+	conn     net.Conn
+	scanner  *bufio.Scanner
+	clientID string
+	mu       sync.Mutex // serialize writes
+}
 
-	pub := zmq4.NewPub(ctx)
-	if err := pub.Listen(wire.EndpointUISub); err != nil {
-		log.Fatalf("[%s] Failed to bind PUB: %v", label, err)
+// uiRegistry tracks active UI clients.
+type uiRegistry struct {
+	mu      sync.RWMutex
+	clients map[string]*uiClient
+}
+
+func newUIRegistry() *uiRegistry {
+	return &uiRegistry{clients: make(map[string]*uiClient)}
+}
+
+func (r *uiRegistry) add(c *uiClient) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if old, ok := r.clients[c.clientID]; ok && old != c {
+		_ = old.conn.Close()
 	}
-	defer func() { _ = pub.Close() }()
+	r.clients[c.clientID] = c
+}
 
-	// Single publisher goroutine to serialize socket access
-	pubChan := make(chan pubFrame, 128)
-	pubEnqueue = pubChan
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case m := <-pubChan:
-				if err := pub.Send(zmq4.Msg{Frames: [][]byte{[]byte(m.topic), m.payload}}); err != nil {
-					log.Printf("[%s] publish error: %v", label, err)
-				}
-			}
+func (r *uiRegistry) updateClientID(c *uiClient, newID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.clients, c.clientID)
+	c.clientID = newID
+	if old, ok := r.clients[newID]; ok && old != c {
+		_ = old.conn.Close()
+	}
+	r.clients[newID] = c
+}
+
+func (r *uiRegistry) remove(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if c, ok := r.clients[id]; ok {
+		_ = c.conn.Close()
+		delete(r.clients, id)
+	}
+}
+
+func (r *uiRegistry) publish(msg *wire.UpdateMessage) {
+	r.mu.RLock()
+	clients := make([]*uiClient, 0, len(r.clients))
+	ids := make([]string, 0, len(r.clients))
+	for id, c := range r.clients {
+		ids = append(ids, id)
+		clients = append(clients, c)
+	}
+	r.mu.RUnlock()
+
+	for i, c := range clients {
+		c.mu.Lock()
+		_ = c.conn.SetWriteDeadline(time.Now().Add(100 * time.Millisecond))
+		err := wire.WriteMsg(c.conn, msg)
+		_ = c.conn.SetWriteDeadline(time.Time{})
+		c.mu.Unlock()
+		if err != nil {
+			r.remove(ids[i])
 		}
-	}()
-
-	rep := zmq4.NewRep(ctx)
-	if err := rep.Listen(endpoint); err != nil {
-		log.Fatalf("[%s] Failed to bind REQ/REP: %v", label, err)
 	}
-	defer func() { _ = rep.Close() }()
-	log.Printf("[%s] Listening REQ on %s; PUB on %s", label, endpoint, wire.EndpointUISub)
+}
+
+func startUIServer(ctx context.Context, mgr *plugins.Manager, reqOut chan<- pluginRequest, pluginsReg *pluginRegistry, store *aggregateStore, ui *uiRegistry) {
+	ln, err := wire.ListenUnix(wire.SocketUI)
+	if err != nil {
+		log.Fatalf("[UI] failed to listen on %s: %v", wire.SocketUI, err)
+	}
+	go func() {
+		<-ctx.Done()
+		_ = ln.Close()
+		_ = wire.CleanupSocket(wire.SocketUI)
+	}()
+	log.Printf("[UI] listening on %s", wire.SocketUI)
 
 	for {
-		msg, err := rep.Recv()
+		conn, err := ln.Accept()
 		if err != nil {
-			log.Printf("[%s] Error receiving: %v", label, err)
-			continue
-		}
-		if len(msg.Frames) == 0 {
-			continue
-		}
-		// Parse incoming request: either raw text or JSON command
-		var parsed wire.UIRequest
-		body := msg.Frames[0]
-		input := string(body)
-		clientID := "default"
-		if json.Unmarshal(body, &parsed) == nil && parsed.Type != "" {
-			switch parsed.Type {
-			case "query":
-				if parsed.Text != "" {
-					input = parsed.Text
-				}
-				if parsed.ClientID != "" {
-					clientID = parsed.ClientID
-				}
-			case "detach":
-				if parsed.ClientID != "" {
-					n := store.removeByClient(parsed.ClientID)
-					log.Printf("[%s] detach client=%s; cleared %d aggregates", label, parsed.ClientID, n)
-				}
-				// Acknowledge and continue
-				ackBytes, _ := json.Marshal(map[string]any{"type": "ok"})
-				_ = rep.Send(zmq4.Msg{Frames: [][]byte{ackBytes}})
-				continue
-			case "select":
-				// Forward UI selection to the targeted plugin if connected
-				if parsed.Plugin != "" && parsed.QueryID != "" && registry.isConnected(parsed.Plugin) {
-					reqOut <- pluginRequest{name: parsed.Plugin, queryID: parsed.QueryID, text: parsed.Text, msgType: wire.MsgSelect}
-					log.Printf("[%s] selection forwarded plugin=%s qid=%s", label, parsed.Plugin, parsed.QueryID)
-				}
-				ackBytes, _ := json.Marshal(map[string]any{"type": "ok"})
-				_ = rep.Send(zmq4.Msg{Frames: [][]byte{ackBytes}})
-				continue
-			default:
-				// unknown type -> fall through as raw input
+			if ctx.Err() != nil {
+				return
 			}
-		}
-		qid := fmt.Sprintf("q-%d-%d", time.Now().UnixNano(), atomic.AddUint64(&querySeq, 1))
-
-		// Send ACK with query ID.
-		ack := wire.AckMessage{Type: "ack", QueryID: qid}
-		ackBytes, _ := json.Marshal(ack)
-		if err := rep.Send(zmq4.Msg{Frames: [][]byte{ackBytes}}); err != nil {
-			log.Printf("[%s] Error sending ack: %v", label, err)
+			log.Printf("[UI] accept error: %v", err)
 			continue
 		}
-		// Register aggregate for this query
+		go handleUIClient(ctx, conn, mgr, reqOut, pluginsReg, store, ui)
+	}
+}
+
+func handleUIClient(ctx context.Context, conn net.Conn, mgr *plugins.Manager, reqOut chan<- pluginRequest, pluginsReg *pluginRegistry, store *aggregateStore, ui *uiRegistry) {
+	scanner := wire.NewScanner(conn)
+	uid := fmt.Sprintf("ui-%d", time.Now().UnixNano())
+	client := &uiClient{conn: conn, scanner: scanner, clientID: uid}
+	ui.add(client)
+	defer ui.remove(uid)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		var parsed wire.UIRequest
+		if err := wire.ReadMsg(scanner, &parsed); err != nil {
+			return
+		}
+
+		if parsed.ClientID != "" && parsed.ClientID != client.clientID {
+			ui.updateClientID(client, parsed.ClientID)
+		}
+
+		switch parsed.Type {
+		case "detach":
+			targetClient := parsed.ClientID
+			if targetClient == "" {
+				targetClient = client.clientID
+			}
+			_ = store.removeByClient(targetClient)
+			_ = wire.WriteMsg(conn, map[string]any{"type": "ok"})
+			continue
+		case "select":
+			if parsed.Plugin != "" && parsed.QueryID != "" && pluginsReg.isConnected(parsed.Plugin) {
+				reqOut <- pluginRequest{name: parsed.Plugin, queryID: parsed.QueryID, text: parsed.Text, msgType: wire.MsgSelect}
+			}
+			_ = wire.WriteMsg(conn, map[string]any{"type": "ok"})
+			continue
+		case "query", "":
+			// handled below
+		default:
+			_ = wire.WriteMsg(conn, map[string]any{"type": "error", "error": "unknown request type"})
+			continue
+		}
+
+		input := parsed.Text
+		if input == "" {
+			continue
+		}
+		clientID := client.clientID
+		if parsed.ClientID != "" {
+			clientID = parsed.ClientID
+		}
+
+		qid := fmt.Sprintf("q-%d-%d", time.Now().UnixNano(), atomicAdd(&querySeq, 1))
+		if err := wire.WriteMsg(conn, &wire.AckMessage{Type: "ack", QueryID: qid}); err != nil {
+			return
+		}
+
 		store.create(qid, clientID, input)
 
-		// Resolve prefix targeting, if any.
 		targetName, targetText, hasTarget := resolvePrefixTarget(input, mgr)
 		if !hasTarget {
 			targetText = input
 		}
 
-		// Spawn a goroutine to route the query to connected plugins via ZMQ.
-		go func(q string, id string, client string) {
-			// Give subscribers time to attach after ACK (slow joiner mitigation).
-			if client != "bench" {
-				time.Sleep(250 * time.Millisecond)
-			}
-
-			for name, p := range mgr.Plugins {
-				if !p.Config.Enabled {
-					continue
-				}
-				if p.Config.Lifecycle == plugins.LifecycleOnCall {
-					continue
-				}
-				if p.Config.RequirePrefix && !hasTarget {
-					continue
-				}
-				if hasTarget && name != targetName {
-					continue
-				}
-				if registry.isConnected(name) {
-					reqOut <- pluginRequest{name: name, queryID: id, text: q}
-				}
-			}
-
-			// Execute on_call plugins for every query.
-			// TODO: consider limiting on_call execution to prefix-targeted queries.
-			for name, p := range mgr.Plugins {
-				if !p.Config.Enabled || p.Config.Lifecycle != plugins.LifecycleOnCall {
-					continue
-				}
-				if p.Config.RequirePrefix && !hasTarget {
-					continue
-				}
-				if hasTarget && name != targetName {
-					continue
-				}
-				t0 := time.Now()
-				pctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-				raw, err := invokeOnCall(pctx, p, q)
-				cancel()
-				if err != nil {
-					raw = json.RawMessage([]byte(fmt.Sprintf(`{"error":"%s"}`, escapeJSONString(err.Error()))))
-				}
-				if snap, ok := store.update(id, name, float64(time.Since(t0).Microseconds())/1000.0, raw); ok {
-					upd := wire.UpdateMessage{Type: "update", QueryID: id, Payload: json.RawMessage(snap)}
-					b, _ := json.Marshal(upd)
-					pubChan <- pubFrame{topic: id, payload: b}
-				}
-			}
-		}(targetText, qid, clientID)
+		go dispatchQuery(ctx, targetText, qid, mgr, reqOut, pluginsReg, store, ui, hasTarget, targetName)
 	}
 }
+
+func dispatchQuery(ctx context.Context, queryText, qid string, mgr *plugins.Manager, reqOut chan<- pluginRequest, pluginsReg *pluginRegistry, store *aggregateStore, ui *uiRegistry, hasTarget bool, targetName string) {
+	for name, p := range mgr.Plugins {
+		if !p.Config.Enabled {
+			continue
+		}
+		if p.Config.Lifecycle == plugins.LifecycleOnCall {
+			continue
+		}
+		if p.Config.RequirePrefix && !hasTarget {
+			continue
+		}
+		if hasTarget && name != targetName {
+			continue
+		}
+		if pluginsReg.isConnected(name) {
+			reqOut <- pluginRequest{name: name, queryID: qid, text: queryText}
+		}
+	}
+
+	for name, p := range mgr.Plugins {
+		if !p.Config.Enabled || p.Config.Lifecycle != plugins.LifecycleOnCall {
+			continue
+		}
+		if p.Config.RequirePrefix && !hasTarget {
+			continue
+		}
+		if hasTarget && name != targetName {
+			continue
+		}
+		t0 := time.Now()
+		pctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		raw, err := invokeOnCall(pctx, p, queryText)
+		cancel()
+		if err != nil {
+			raw = json.RawMessage([]byte(fmt.Sprintf(`{"error":"%s"}`, escapeJSONString(err.Error()))))
+		}
+		if snap, ok := store.update(qid, name, float64(time.Since(t0).Microseconds())/1000.0, raw); ok {
+			ui.publish(&wire.UpdateMessage{Type: "update", QueryID: qid, Payload: snap})
+		}
+	}
+}
+
+// atomicAdd wraps sync/atomic.AddUint64 for clarity.
+func atomicAdd(ptr *uint64, delta uint64) uint64 { return atomic.AddUint64(ptr, delta) }
+
 func resolvePrefixTarget(input string, mgr *plugins.Manager) (string, string, bool) {
 	text := strings.TrimSpace(input)
 	if text == "" {

@@ -1,24 +1,22 @@
 package daemon
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
-	"fmt"
+	"net"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/go-zeromq/zmq4"
 	"github.com/iMithrellas/tarragon/internal/plugins"
 	"github.com/iMithrellas/tarragon/internal/wire"
 )
 
-// Test the UI API surface of reqServer: ACK on query, update publish (fallback path), and select forwarding.
-func TestUIServer_AckAndSelectAndFallback(t *testing.T) {
+func TestUIServer_AckAndUpdateOverUDS(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Prepare a temp plugin that supports --once and prints stable JSON
 	dir := t.TempDir()
 	plugName := "plug_oncall"
 	entry := writeScript(t, dir, "once.sh", "#!/usr/bin/env bash\nif [[ \"$1\" == \"--once\" ]]; then echo '{\"ok\":true,\"data\":\"pong\"}'; fi\n")
@@ -26,42 +24,40 @@ func TestUIServer_AckAndSelectAndFallback(t *testing.T) {
 	mgr.Plugins[plugName] = &plugins.Plugin{Dir: dir, Config: plugins.PluginConfig{Name: plugName, Entrypoint: filepath.Base(entry), Enabled: true, Lifecycle: plugins.LifecycleOnCall}}
 
 	store := newAggregateStore(10)
-	reqOut, registry := startPluginRouter(ctx, store) // start router for forwarding; we won't actually connect plugins here
-	_ = reqOut
+	uiReg := newUIRegistry()
+	reqOut := make(chan pluginRequest, 16)
+	plugReg := &pluginRegistry{conns: map[string]net.Conn{}, scanners: map[string]*bufio.Scanner{}}
 
-	// Start UI server on a unique REQ endpoint
-	endpoint := fmt.Sprintf("ipc:///tmp/tarragon-ui-test-%d.ipc", time.Now().UnixNano())
-	go reqServer(ctx, endpoint, "TEST", mgr, reqOut, registry, store)
+	go startUIServer(ctx, mgr, reqOut, plugReg, store, uiReg)
 
-	// Client sockets
-	cliReq := zmq4.NewReq(ctx)
-	if err := cliReq.Dial(endpoint); err != nil {
-		t.Fatalf("dial req: %v", err)
+	deadline := time.Now().Add(3 * time.Second)
+	var conn net.Conn
+	var err error
+	for time.Now().Before(deadline) {
+		conn, err = net.Dial("unix", wire.SocketUI)
+		if err == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
-	defer func() { _ = cliReq.Close() }()
-	cliSub := zmq4.NewSub(ctx)
-	if err := cliSub.Dial(wire.EndpointUISub); err != nil {
-		t.Fatalf("dial sub: %v", err)
+	if err != nil {
+		t.Fatalf("dial ui socket: %v", err)
 	}
-	defer func() { _ = cliSub.Close() }()
+	defer func() { _ = conn.Close() }()
 
-	// 1) Send a query and expect an ack with query_id
-	body, _ := json.Marshal(&wire.UIRequest{Type: "query", ClientID: "cli-test", Text: "hello"})
-	if err := cliReq.Send(zmq4.NewMsg(body)); err != nil {
-		t.Fatalf("send query: %v", err)
+	scanner := wire.NewScanner(conn)
+	if err := wire.WriteMsg(conn, &wire.UIRequest{Type: "query", ClientID: "cli-test", Text: "hello"}); err != nil {
+		t.Fatalf("write query: %v", err)
 	}
-	ackMsg, err := cliReq.Recv()
-	if err != nil || len(ackMsg.Frames) == 0 {
-		t.Fatalf("recv ack: %v", err)
-	}
+
 	var ack wire.AckMessage
-	if json.Unmarshal(ackMsg.Frames[0], &ack) != nil || ack.QueryID == "" {
-		t.Fatalf("bad ack: %q", string(ackMsg.Frames[0]))
+	if err := wire.ReadMsg(scanner, &ack); err != nil {
+		t.Fatalf("read ack: %v", err)
 	}
-	// subscribe to updates for this query
-	_ = cliSub.SetOption(zmq4.OptionSubscribe, ack.QueryID)
+	if ack.Type != "ack" || ack.QueryID == "" {
+		t.Fatalf("bad ack: %+v", ack)
+	}
 
-	// 2) Expect a published update containing aggregate snapshot with our plugin result (fallback path)
 	type aggView struct {
 		QueryID string `json:"query_id"`
 		Results map[string]struct {
@@ -69,27 +65,18 @@ func TestUIServer_AckAndSelectAndFallback(t *testing.T) {
 		} `json:"results"`
 		Input string `json:"input"`
 	}
-	// receive with timeout
-	deadline := time.Now().Add(3 * time.Second)
-	var snapshot aggView
-	for time.Now().Before(deadline) {
-		msg, err := cliSub.Recv()
-		if err != nil || len(msg.Frames) < 2 {
-			continue
-		}
-		var upd wire.UpdateMessage
-		if json.Unmarshal(msg.Frames[1], &upd) != nil {
-			continue
-		}
-		if upd.QueryID != ack.QueryID {
-			continue
-		}
-		if json.Unmarshal(upd.Payload, &snapshot) == nil && snapshot.QueryID == ack.QueryID {
-			break
-		}
+
+	var upd wire.UpdateMessage
+	if err := wire.ReadMsg(scanner, &upd); err != nil {
+		t.Fatalf("read update: %v", err)
 	}
-	if snapshot.QueryID != ack.QueryID {
-		t.Fatalf("no snapshot for %s", ack.QueryID)
+	if upd.Type != "update" || upd.QueryID != ack.QueryID {
+		t.Fatalf("unexpected update header: %+v", upd)
+	}
+
+	var snapshot aggView
+	if err := json.Unmarshal(upd.Payload, &snapshot); err != nil {
+		t.Fatalf("unmarshal snapshot: %v", err)
 	}
 	if snapshot.Input != "hello" {
 		t.Fatalf("unexpected input: %q", snapshot.Input)
@@ -99,16 +86,67 @@ func TestUIServer_AckAndSelectAndFallback(t *testing.T) {
 	} else if string(r.Data) != `{"ok":true,"data":"pong"}` {
 		t.Fatalf("unexpected plugin data: %s", string(r.Data))
 	}
+}
 
-	// 3) Selection forwarding: mark a plugin connected and send a select
-	registry.set("plug_connected", []byte{1})
-	// Use a fresh REQ to avoid blocking
-	selBody, _ := json.Marshal(&wire.UIRequest{Type: "select", ClientID: "cli-test", QueryID: ack.QueryID, Plugin: "plug_connected", Text: "id-123"})
-	if err := cliReq.Send(zmq4.NewMsg(selBody)); err != nil {
-		t.Fatalf("send select: %v", err)
+func TestUIServer_SelectAndDetachAck(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mgr := plugins.NewManager("-")
+	store := newAggregateStore(10)
+	uiReg := newUIRegistry()
+	reqOut := make(chan pluginRequest, 16)
+	plugReg := &pluginRegistry{conns: map[string]net.Conn{}, scanners: map[string]*bufio.Scanner{}}
+
+	c1, c2 := net.Pipe()
+	plugReg.set("plug_connected", c1, wire.NewScanner(c1))
+	defer func() { _ = c2.Close() }()
+
+	go startUIServer(ctx, mgr, reqOut, plugReg, store, uiReg)
+
+	deadline := time.Now().Add(3 * time.Second)
+	var conn net.Conn
+	var err error
+	for time.Now().Before(deadline) {
+		conn, err = net.Dial("unix", wire.SocketUI)
+		if err == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
-	if _, err := cliReq.Recv(); err != nil {
-		t.Fatalf("recv select ack: %v", err)
+	if err != nil {
+		t.Fatalf("dial ui socket: %v", err)
 	}
-	// We can't easily observe reqOut beyond router internals; but absence of panic and ack OK covers the path.
+	defer func() { _ = conn.Close() }()
+
+	scanner := wire.NewScanner(conn)
+	if err := wire.WriteMsg(conn, &wire.UIRequest{Type: "select", ClientID: "cli-test", QueryID: "q-1", Plugin: "plug_connected", Text: "id-123"}); err != nil {
+		t.Fatalf("write select: %v", err)
+	}
+	var okMsg map[string]any
+	if err := wire.ReadMsg(scanner, &okMsg); err != nil {
+		t.Fatalf("read select ack: %v", err)
+	}
+	if okMsg["type"] != "ok" {
+		t.Fatalf("unexpected ack: %+v", okMsg)
+	}
+
+	select {
+	case msg := <-reqOut:
+		if msg.name != "plug_connected" || msg.queryID != "q-1" || msg.msgType != wire.MsgSelect {
+			t.Fatalf("unexpected forwarded select: %+v", msg)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("expected select forwarded")
+	}
+
+	if err := wire.WriteMsg(conn, &wire.UIRequest{Type: "detach", ClientID: "cli-test"}); err != nil {
+		t.Fatalf("write detach: %v", err)
+	}
+	if err := wire.ReadMsg(scanner, &okMsg); err != nil {
+		t.Fatalf("read detach ack: %v", err)
+	}
+	if okMsg["type"] != "ok" {
+		t.Fatalf("unexpected detach ack: %+v", okMsg)
+	}
 }

@@ -1,25 +1,35 @@
 package daemon
 
-import "testing"
+import (
+	"bufio"
+	"net"
+	"testing"
 
-func TestEnqueuePub(t *testing.T) {
-	// Case 1: nil channel should not panic
-	pubEnqueue = nil
-	enqueuePub("topic", []byte("data"))
+	"github.com/iMithrellas/tarragon/internal/wire"
+)
 
-	// Case 2: valid channel receives a frame
-	ch := make(chan pubFrame, 1)
-	old := pubEnqueue
-	pubEnqueue = ch
-	defer func() { pubEnqueue = old }()
+func TestUIRegistryPublish(t *testing.T) {
+	c1, c2 := net.Pipe()
+	defer func() { _ = c2.Close() }()
 
-	enqueuePub("t1", []byte("p1"))
-	select {
-	case f := <-ch:
-		if f.topic != "t1" || string(f.payload) != "p1" {
-			t.Fatalf("unexpected frame: %+v", f)
-		}
-	default:
-		t.Fatalf("expected frame enqueued")
+	r := newUIRegistry()
+	r.add(&uiClient{conn: c1, scanner: wire.NewScanner(c1), clientID: "u1"})
+
+	done := make(chan *wire.UpdateMessage, 1)
+	go func() {
+		s := wire.NewScanner(bufio.NewReader(c2))
+		var upd wire.UpdateMessage
+		_ = wire.ReadMsg(s, &upd)
+		done <- &upd
+	}()
+
+	r.publish(&wire.UpdateMessage{Type: "update", QueryID: "q1", Payload: []byte(`{"x":1}`)})
+	upd := <-done
+	if upd.Type != "update" || upd.QueryID != "q1" || string(upd.Payload) != `{"x":1}` {
+		t.Fatalf("unexpected update: %+v", upd)
 	}
+}
+
+func TestPublishToUINilRegistry(t *testing.T) {
+	publishToUI(nil, "q1", []byte(`{}`))
 }

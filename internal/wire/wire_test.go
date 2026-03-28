@@ -1,7 +1,11 @@
 package wire
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -46,4 +50,49 @@ func TestPluginReqRespRoundTrip(t *testing.T) {
 	if resp2.Type != MsgResponse || resp2.QueryID != "q-2" || string(resp2.Data) != `{"ok":true}` {
 		t.Fatalf("unexpected resp2: %+v", resp2)
 	}
+}
+
+func TestWriteReadMsgRoundTrip(t *testing.T) {
+	buf := &bytes.Buffer{}
+	in := &UIRequest{Type: "query", ClientID: "c1", Text: "hello"}
+	if err := WriteMsg(buf, in); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	s := NewScanner(buf)
+	var out UIRequest
+	if err := ReadMsg(s, &out); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if out.Type != in.Type || out.ClientID != in.ClientID || out.Text != in.Text {
+		t.Fatalf("unexpected roundtrip: %+v", out)
+	}
+
+	if err := ReadMsg(s, &out); err != io.EOF {
+		t.Fatalf("expected EOF, got %v", err)
+	}
+}
+
+func TestCleanupSocketRemovesFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "x.sock")
+	if err := os.WriteFile(path, []byte("stale"), 0o644); err != nil {
+		t.Fatalf("write stale: %v", err)
+	}
+	if err := CleanupSocket(path); err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("expected removed, stat err=%v", err)
+	}
+}
+
+func TestListenUnix(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "l.sock")
+	ln, err := ListenUnix(path)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	_ = ln.Close()
 }

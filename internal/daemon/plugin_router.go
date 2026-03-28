@@ -1,50 +1,68 @@
 package daemon
 
 import (
-	"bytes"
+	"bufio"
 	"context"
-	"encoding/json"
 	"log"
+	"net"
 	"sync"
 	"time"
 
-	"github.com/go-zeromq/zmq4"
 	"github.com/iMithrellas/tarragon/internal/wire"
 )
 
-// Connected plugin registry (name -> routing id)
+// pluginRegistry tracks connected plugins by name.
 type pluginRegistry struct {
 	mu       sync.RWMutex
-	nameToID map[string][]byte
+	conns    map[string]net.Conn
+	scanners map[string]*bufio.Scanner
 }
 
-func (r *pluginRegistry) set(name string, id []byte) {
+func (r *pluginRegistry) set(name string, conn net.Conn, scanner *bufio.Scanner) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.nameToID == nil {
-		r.nameToID = make(map[string][]byte)
+	if r.conns == nil {
+		r.conns = make(map[string]net.Conn)
 	}
-	r.nameToID[name] = append([]byte(nil), id...)
+	if r.scanners == nil {
+		r.scanners = make(map[string]*bufio.Scanner)
+	}
+	if old, ok := r.conns[name]; ok {
+		_ = old.Close()
+	}
+	r.conns[name] = conn
+	r.scanners[name] = scanner
+}
+
+func (r *pluginRegistry) remove(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.conns != nil {
+		if c, ok := r.conns[name]; ok {
+			_ = c.Close()
+		}
+		delete(r.conns, name)
+	}
+	if r.scanners != nil {
+		delete(r.scanners, name)
+	}
 }
 
 func (r *pluginRegistry) isConnected(name string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	_, ok := r.nameToID[name]
+	_, ok := r.conns[name]
 	return ok
 }
 
-func (r *pluginRegistry) getID(name string) ([]byte, bool) {
+func (r *pluginRegistry) getConn(name string) (net.Conn, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	id, ok := r.nameToID[name]
-	if !ok {
-		return nil, false
-	}
-	return append([]byte(nil), id...), true
+	c, ok := r.conns[name]
+	return c, ok
 }
 
-// Requests routed to plugins
+// Requests routed to plugins.
 type pluginRequest struct {
 	name    string
 	queryID string
@@ -52,18 +70,20 @@ type pluginRequest struct {
 	msgType string
 }
 
-// startPluginRouter starts a ROUTER socket for plugins and returns
-// a request channel and a registry of connected plugins.
-func startPluginRouter(ctx context.Context, store *aggregateStore) (chan<- pluginRequest, *pluginRegistry) {
-	cleanupIPC(wire.EndpointPlugins)
-	router := zmq4.NewRouter(ctx)
-	if err := router.Listen(wire.EndpointPlugins); err != nil {
-		log.Fatalf("[PLUGINS] Failed to bind ROUTER: %v", err)
+func startPluginListener(ctx context.Context, store *aggregateStore, ui *uiRegistry) (chan<- pluginRequest, *pluginRegistry) {
+	ln, err := wire.ListenUnix(wire.SocketPlugins)
+	if err != nil {
+		log.Fatalf("[PLUGINS] Failed to listen on %s: %v", wire.SocketPlugins, err)
 	}
-	log.Printf("[PLUGINS] ROUTER listening on %s", wire.EndpointPlugins)
+	go func() {
+		<-ctx.Done()
+		_ = ln.Close()
+		_ = wire.CleanupSocket(wire.SocketPlugins)
+	}()
 
-	registry := &pluginRegistry{nameToID: make(map[string][]byte)}
-	// Track per-plugin send times to compute response latency.
+	log.Printf("[PLUGINS] listening on %s", wire.SocketPlugins)
+	registry := &pluginRegistry{conns: make(map[string]net.Conn), scanners: make(map[string]*bufio.Scanner)}
+
 	type timingStore struct {
 		mu sync.Mutex
 		m  map[string]map[string]time.Time // queryID -> plugin -> start
@@ -91,16 +111,29 @@ func startPluginRouter(ctx context.Context, store *aggregateStore) (chan<- plugi
 		}
 		return 0
 	}
-	reqChan := make(chan pluginRequest, 256)
 
-	// Sender goroutine
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				log.Printf("[PLUGINS] accept error: %v", err)
+				continue
+			}
+			go handlePluginConn(ctx, conn, registry, store, ui, elapsedMs)
+		}
+	}()
+
+	reqChan := make(chan pluginRequest, 256)
 	go func() {
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case req := <-reqChan:
-				id, ok := registry.getID(req.name)
+				conn, ok := registry.getConn(req.name)
 				if !ok {
 					log.Printf("[PLUGINS] drop request: plugin %s not connected", req.name)
 					continue
@@ -109,83 +142,61 @@ func startPluginRouter(ctx context.Context, store *aggregateStore) (chan<- plugi
 				if msgType == "" {
 					msgType = wire.MsgRequest
 				}
-				body, _ := json.Marshal(&wire.PluginRequest{Type: msgType, QueryID: req.queryID, Text: req.text})
-				if err := router.Send(zmq4.Msg{Frames: [][]byte{id, body}}); err != nil {
+				_ = conn.SetWriteDeadline(time.Now().Add(100 * time.Millisecond))
+				err := wire.WriteMsg(conn, &wire.PluginRequest{Type: msgType, QueryID: req.queryID, Text: req.text})
+				_ = conn.SetWriteDeadline(time.Time{})
+				if err != nil {
 					log.Printf("[PLUGINS] send to %s failed: %v", req.name, err)
-				} else {
-					log.Printf("[PLUGINS] sent request to %s qid=%s", req.name, req.queryID)
-					startTiming(req.queryID, req.name)
-				}
-			}
-		}
-	}()
-
-	// Receiver goroutine
-	go func() {
-		for {
-			msg, err := router.Recv()
-			if err != nil {
-				if ctx.Err() != nil {
-					return
-				}
-				log.Printf("[PLUGINS] recv error: %v", err)
-				continue
-			}
-			if len(msg.Frames) < 2 {
-				continue
-			}
-			id := msg.Frames[0]
-			data := msg.Frames[1]
-			var h map[string]json.RawMessage
-			if err := json.Unmarshal(data, &h); err != nil {
-				log.Printf("[PLUGINS] invalid JSON: %v", err)
-				continue
-			}
-			var typ string
-			_ = json.Unmarshal(h["type"], &typ)
-			switch typ {
-			case wire.MsgHello:
-				var hello wire.PluginHello
-				_ = json.Unmarshal(data, &hello)
-				if hello.Name == "" {
-					log.Printf("[PLUGINS] hello with empty name; ignoring")
+					registry.remove(req.name)
 					continue
 				}
-				registry.set(hello.Name, id)
-				log.Printf("[PLUGINS] plugin connected: %s", hello.Name)
-			case wire.MsgResponse:
-				var resp wire.PluginResponse
-				if err := json.Unmarshal(data, &resp); err != nil {
-					log.Printf("[PLUGINS] invalid response json: %v", err)
-					continue
-				}
-				if resp.QueryID == "" {
-					log.Printf("[PLUGINS] response missing query_id")
-					continue
-				}
-				// Resolve name from id (reverse lookup)
-				name := ""
-				registry.mu.RLock()
-				for n, rid := range registry.nameToID {
-					if bytes.Equal(rid, id) {
-						name = n
-						break
-					}
-				}
-				registry.mu.RUnlock()
-				// Update aggregate and publish full snapshot
-				snap, ok := store.update(resp.QueryID, name, elapsedMs(resp.QueryID, name), resp.Data)
-				if ok {
-					upd := wire.UpdateMessage{Type: "update", QueryID: resp.QueryID, Payload: json.RawMessage(snap)}
-					b, _ := json.Marshal(upd)
-					enqueuePub(resp.QueryID, b)
-				}
-				log.Printf("[PLUGINS] response from %s qid=%s", name, resp.QueryID)
-			default:
-				log.Printf("[PLUGINS] unknown message type: %s", typ)
+				startTiming(req.queryID, req.name)
 			}
 		}
 	}()
 
 	return reqChan, registry
+}
+
+func handlePluginConn(ctx context.Context, conn net.Conn, registry *pluginRegistry, store *aggregateStore, ui *uiRegistry, elapsedMs func(qid, plugin string) float64) {
+	scanner := wire.NewScanner(conn)
+	var hello wire.PluginHello
+	if err := wire.ReadMsg(scanner, &hello); err != nil {
+		log.Printf("[PLUGINS] failed hello read: %v", err)
+		_ = conn.Close()
+		return
+	}
+	if hello.Type != wire.MsgHello || hello.Name == "" {
+		log.Printf("[PLUGINS] invalid hello: type=%q name=%q", hello.Type, hello.Name)
+		_ = conn.Close()
+		return
+	}
+
+	registry.set(hello.Name, conn, scanner)
+	log.Printf("[PLUGINS] plugin connected: %s", hello.Name)
+
+	defer func() {
+		registry.remove(hello.Name)
+		log.Printf("[PLUGINS] plugin disconnected: %s", hello.Name)
+	}()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		var resp wire.PluginResponse
+		if err := wire.ReadMsg(scanner, &resp); err != nil {
+			return
+		}
+		if resp.Type != wire.MsgResponse || resp.QueryID == "" {
+			continue
+		}
+		snap, ok := store.update(resp.QueryID, hello.Name, elapsedMs(resp.QueryID, hello.Name), resp.Data)
+		if ok {
+			ui.publish(&wire.UpdateMessage{Type: "update", QueryID: resp.QueryID, Payload: snap})
+		}
+	}
 }

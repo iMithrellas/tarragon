@@ -1,12 +1,24 @@
 package wire
 
-import "encoding/json"
+import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"os"
+	"path/filepath"
+)
 
-// Endpoints used across daemon and UI
+// Unix sockets used across daemon and UI.
 const (
-	EndpointUIReq   = "ipc:///tmp/tarragon-ui.ipc"      // REQ/REP for query initiation
-	EndpointUISub   = "ipc:///tmp/tarragon-updates.ipc" // PUB/SUB for async updates
-	EndpointPlugins = "ipc:///tmp/tarragon-plugins.ipc" // ROUTER for plugin workers
+	SocketUI      = "/tmp/tarragon-ui.sock"
+	SocketPlugins = "/tmp/tarragon-plugins.sock"
+
+	// Backward-compatible aliases while parallel workstreams migrate.
+	EndpointUIReq   = SocketUI
+	EndpointUISub   = SocketUI
+	EndpointPlugins = SocketPlugins
 )
 
 // Message type constants (for plugins)
@@ -68,4 +80,61 @@ type PluginResponse struct {
 	Type    string          `json:"type"` // "response"
 	QueryID string          `json:"query_id"`
 	Data    json.RawMessage `json:"data"`
+}
+
+// NewScanner creates a line scanner suitable for NDJSON streams.
+// Maximum line length is 1MB.
+func NewScanner(r io.Reader) *bufio.Scanner {
+	s := bufio.NewScanner(r)
+	buf := make([]byte, 64*1024)
+	s.Buffer(buf, 1024*1024)
+	return s
+}
+
+// WriteMsg writes one JSON message followed by '\n'.
+func WriteMsg(w io.Writer, v any) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b = append(b, '\n')
+	_, err = w.Write(b)
+	return err
+}
+
+// ReadMsg reads one NDJSON line and unmarshals it into v.
+func ReadMsg(scanner *bufio.Scanner, v any) error {
+	if !scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			return err
+		}
+		return io.EOF
+	}
+	if err := json.Unmarshal(scanner.Bytes(), v); err != nil {
+		return fmt.Errorf("decode message: %w", err)
+	}
+	return nil
+}
+
+// CleanupSocket removes a stale unix socket path.
+func CleanupSocket(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+// ListenUnix cleans up a stale path and starts a unix listener.
+func ListenUnix(path string) (net.Listener, error) {
+	if err := CleanupSocket(path); err != nil {
+		return nil, err
+	}
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		return nil, err
+	}
+	return ln, nil
 }

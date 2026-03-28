@@ -190,9 +190,9 @@ func (m *benchModel) View() string {
 	}
 
 	if m.done {
-		b.WriteString(fmt.Sprintf("Benchmark complete (%d/%d). Press q to quit.\n", doneCount, m.total))
+		_, _ = fmt.Fprintf(&b, "Benchmark complete (%d/%d). Press q to quit.\n", doneCount, m.total)
 	} else {
-		b.WriteString(fmt.Sprintf("Benchmark running (%d/%d). Press q to quit.\n", doneCount, m.total))
+		_, _ = fmt.Fprintf(&b, "Benchmark running (%d/%d). Press q to quit.\n", doneCount, m.total)
 	}
 	if m.fatalErr != "" {
 		b.WriteString("Error: " + m.fatalErr + "\n")
@@ -204,7 +204,7 @@ func (m *benchModel) View() string {
 		if st := m.stats[name]; st != nil {
 			worstLines := worstInputs(st, m.worstPct)
 			if len(worstLines) > 0 {
-				b.WriteString(fmt.Sprintf("Worst p%.0f inputs:\n", m.worstPct))
+				_, _ = fmt.Fprintf(&b, "Worst p%.0f inputs:\n", m.worstPct)
 				for _, line := range worstLines {
 					b.WriteString("  " + line + "\n")
 				}
@@ -434,7 +434,7 @@ func worstInputs(st *benchStats, pct float64) []string {
 		entries = append(entries, entry{idx: i, ms: ms})
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].ms < entries[j].ms })
-	cut := int(math.Ceil((pct / 100.0) * float64(len(entries)))) - 1
+	cut := int(math.Ceil((pct/100.0)*float64(len(entries)))) - 1
 	if cut < 0 {
 		cut = 0
 	}
