@@ -22,6 +22,7 @@ const (
 	MsgRequest  = "request"
 	MsgResponse = "response"
 	MsgSelect   = "select"
+	MsgStatus   = "status"
 )
 
 // UIRequest is sent from UI to daemon over REQ.
@@ -39,6 +40,13 @@ type UIRequest struct {
 type AckMessage struct {
 	Type    string `json:"type"` // "ack"
 	QueryID string `json:"query_id"`
+}
+
+// StatusResponse carries plugin connection status to the UI.
+type StatusResponse struct {
+	Type      string   `json:"type"`      // "status"
+	Connected []string `json:"connected"` // sorted connected plugin names
+	Total     int      `json:"total"`     // total enabled plugins
 }
 
 // UpdateMessage is streamed from daemon to UI with aggregate snapshots.
