@@ -23,7 +23,7 @@ func RunDaemon() {
 	if err := mgr.Discover(); err != nil {
 		log.Printf("Plugin discovery error: %v", err)
 	}
-	if err := mgr.StartPersistent(ctx, wire.EndpointPlugins); err != nil {
+	if err := mgr.StartPersistent(ctx, wire.SocketPlugins); err != nil {
 		log.Printf("Plugin start error: %v", err)
 	}
 	defer mgr.StopAll()
@@ -42,16 +42,12 @@ func RunDaemon() {
 		maxAgg = 64
 	}
 	store := newAggregateStore(maxAgg)
+	ui := newUIRegistry()
 
-	// Start plugin ROUTER and get channels/registry
-	reqOut, registry := startPluginRouter(ctx, store)
-
-	// Start IPC server(s)
-	if viper.GetBool("run_tcp") {
-		go reqServer(ctx, "tcp://127.0.0.1:"+viper.GetString("port"), "TCP", mgr, reqOut, registry, store)
-	}
+	// Start plugin listener and UI listener.
+	reqOut, registry := startPluginListener(ctx, store, ui)
 	if viper.GetBool("run_ipc") {
-		go reqServer(ctx, wire.EndpointUIReq, "IPC", mgr, reqOut, registry, store)
+		go startUIServer(ctx, mgr, reqOut, registry, store, ui)
 	}
 
 	<-ctx.Done()

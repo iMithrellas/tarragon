@@ -5,23 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 
 	"github.com/iMithrellas/tarragon/internal/plugins"
 )
-
-// Remove stale ipc files to avoid EADDRINUSE on restart.
-func cleanupIPC(endpoint string) {
-	if len(endpoint) >= 6 && endpoint[:6] == "ipc://" {
-		path := endpoint[6:]
-		_ = os.MkdirAll(filepath.Dir(path), 0o755)
-		if _, err := os.Stat(path); err == nil {
-			_ = os.Remove(path)
-		}
-	}
-}
 
 // invokeOnCall runs a plugin entrypoint once with the given query and returns its JSON output.
 func invokeOnCall(ctx context.Context, p *plugins.Plugin, query string) (json.RawMessage, error) {

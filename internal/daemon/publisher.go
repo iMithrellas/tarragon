@@ -1,17 +1,11 @@
 package daemon
 
-// PUB socket serialization and enqueue helpers
+import "github.com/iMithrellas/tarragon/internal/wire"
 
-type pubFrame struct {
-	topic   string
-	payload []byte
-}
-
-// Global publisher enqueue channel (initialized in reqServer)
-var pubEnqueue chan pubFrame
-
-func enqueuePub(topic string, payload []byte) {
-	if pubEnqueue != nil {
-		pubEnqueue <- pubFrame{topic: topic, payload: payload}
+// publishToUI forwards an update to all connected UI clients.
+func publishToUI(reg *uiRegistry, qid string, payload []byte) {
+	if reg == nil {
+		return
 	}
+	reg.publish(&wire.UpdateMessage{Type: "update", QueryID: qid, Payload: payload})
 }

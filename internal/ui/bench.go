@@ -190,9 +190,9 @@ func (m *benchModel) View() string {
 	}
 
 	if m.done {
-		fmt.Fprintf(&b, "Benchmark complete (%d/%d). Press q to quit.\n", doneCount, m.total)
+		_, _ = fmt.Fprintf(&b, "Benchmark complete (%d/%d). Press q to quit.\n", doneCount, m.total)
 	} else {
-		fmt.Fprintf(&b, "Benchmark running (%d/%d). Press q to quit.\n", doneCount, m.total)
+		_, _ = fmt.Fprintf(&b, "Benchmark running (%d/%d). Press q to quit.\n", doneCount, m.total)
 	}
 	if m.fatalErr != "" {
 		b.WriteString("Error: " + m.fatalErr + "\n")
@@ -204,7 +204,7 @@ func (m *benchModel) View() string {
 		if st := m.stats[name]; st != nil {
 			worstLines := worstInputs(st, m.worstPct)
 			if len(worstLines) > 0 {
-				fmt.Fprintf(&b, "Worst p%.0f inputs:\n", m.worstPct)
+				_, _ = fmt.Fprintf(&b, "Worst p%.0f inputs:\n", m.worstPct)
 				for _, line := range worstLines {
 					b.WriteString("  " + line + "\n")
 				}

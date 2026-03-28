@@ -1,18 +1,30 @@
 package daemon
 
-import "testing"
+import (
+	"net"
+	"testing"
+
+	"github.com/iMithrellas/tarragon/internal/wire"
+)
 
 func TestPluginRegistryBasic(t *testing.T) {
 	r := &pluginRegistry{}
 	if r.isConnected("p1") {
 		t.Fatalf("unexpected connected before set")
 	}
-	r.set("p1", []byte{1, 2, 3})
+	c1, c2 := net.Pipe()
+	defer func() { _ = c2.Close() }()
+	s := wire.NewScanner(c1)
+	r.set("p1", c1, s)
 	if !r.isConnected("p1") {
 		t.Fatalf("expected connected")
 	}
-	id, ok := r.getID("p1")
-	if !ok || len(id) != 3 || id[0] != 1 {
-		t.Fatalf("unexpected id: %v %v", id, ok)
+	c, ok := r.getConn("p1")
+	if !ok || c == nil {
+		t.Fatalf("unexpected conn: %v %v", c, ok)
+	}
+	r.remove("p1")
+	if r.isConnected("p1") {
+		t.Fatalf("expected disconnected after remove")
 	}
 }
