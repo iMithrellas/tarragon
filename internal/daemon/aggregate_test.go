@@ -1,11 +1,14 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"math"
+	"path/filepath"
 	"reflect"
 	"testing"
 
+	"github.com/iMithrellas/tarragon/internal/db"
 	"github.com/iMithrellas/tarragon/internal/wire"
 )
 
@@ -147,5 +150,28 @@ func TestOrderResultsGlobalBlendsFrecencyAndSetsField(t *testing.T) {
 	want := (1-0.3)*0.5 + 0.3*1.5
 	if math.Abs(got[0].Score-want) > 1e-9 {
 		t.Fatalf("unexpected blended score: got=%v want=%v", got[0].Score, want)
+	}
+}
+
+func TestAggregateStoreRefreshFrecencyCache(t *testing.T) {
+	dir := t.TempDir()
+	database, err := db.Open(filepath.Join(dir, "frecency.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	if err := database.RecordSelection(context.Background(), "plug", "id-1"); err != nil {
+		t.Fatalf("record selection: %v", err)
+	}
+
+	s := newAggregateStore(10, "global", database, 0.3)
+	if err := s.RefreshFrecencyCache(context.Background()); err != nil {
+		t.Fatalf("refresh frecency cache: %v", err)
+	}
+
+	scores := s.frecencyScoresSnapshot()
+	if scores["plug:id-1"] <= 0 {
+		t.Fatalf("expected cached frecency score, got %v", scores["plug:id-1"])
 	}
 }

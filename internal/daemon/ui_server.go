@@ -154,6 +154,10 @@ func handleUIClient(ctx context.Context, conn net.Conn, mgr *plugins.Manager, re
 				go func(plugin, id string) {
 					if err := frecencyDB.RecordSelection(context.Background(), plugin, id); err != nil {
 						log.Printf("[UI] failed to record selection %s:%s: %v", plugin, id, err)
+						return
+					}
+					if err := store.RefreshFrecencyCache(context.Background()); err != nil {
+						log.Printf("[UI] failed to refresh frecency cache: %v", err)
 					}
 				}(parsed.Plugin, selectedID)
 			}

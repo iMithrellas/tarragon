@@ -33,9 +33,13 @@ type aggregateStore struct {
 	orderingMode string
 	frecencyDB   *db.DB
 	frecencyW    float64
-	order        []string
-	byID         map[string]*aggregate
-	byClient     map[string]map[string]struct{}
+
+	frecencyCacheMu sync.RWMutex
+	frecencyCache   map[string]float64
+
+	order    []string
+	byID     map[string]*aggregate
+	byClient map[string]map[string]struct{}
 }
 
 func newAggregateStore(limit int, orderingMode string, frecencyDB *db.DB, frecencyWeight float64) *aggregateStore {
@@ -48,14 +52,46 @@ func newAggregateStore(limit int, orderingMode string, frecencyDB *db.DB, frecen
 	if frecencyWeight > 1 {
 		frecencyWeight = 1
 	}
-	return &aggregateStore{
-		limit:        limit,
-		orderingMode: orderingMode,
-		frecencyDB:   frecencyDB,
-		frecencyW:    frecencyWeight,
-		byID:         make(map[string]*aggregate),
-		byClient:     make(map[string]map[string]struct{}),
+	s := &aggregateStore{
+		limit:         limit,
+		orderingMode:  orderingMode,
+		frecencyDB:    frecencyDB,
+		frecencyW:     frecencyWeight,
+		frecencyCache: make(map[string]float64),
+		byID:          make(map[string]*aggregate),
+		byClient:      make(map[string]map[string]struct{}),
 	}
+	if err := s.RefreshFrecencyCache(context.Background()); err != nil {
+		log.Printf("[AGG] initial frecency cache refresh failed: %v", err)
+	}
+	return s
+}
+
+// RefreshFrecencyCache reloads frecency scores from DB into memory.
+func (s *aggregateStore) RefreshFrecencyCache(ctx context.Context) error {
+	if s == nil || s.frecencyDB == nil {
+		return nil
+	}
+
+	scores, err := s.frecencyDB.GetFrecencyScores(ctx)
+	if err != nil {
+		return err
+	}
+
+	s.frecencyCacheMu.Lock()
+	s.frecencyCache = scores
+	s.frecencyCacheMu.Unlock()
+	return nil
+}
+
+func (s *aggregateStore) frecencyScoresSnapshot() map[string]float64 {
+	s.frecencyCacheMu.RLock()
+	defer s.frecencyCacheMu.RUnlock()
+	out := make(map[string]float64, len(s.frecencyCache))
+	for k, v := range s.frecencyCache {
+		out[k] = v
+	}
+	return out
 }
 
 func (s *aggregateStore) create(qid, client, input string) {
@@ -94,6 +130,8 @@ func (s *aggregateStore) create(qid, client, input string) {
 
 // update returns a snapshot JSON after applying the update.
 func (s *aggregateStore) update(qid, plugin string, elapsed float64, data json.RawMessage) ([]byte, bool) {
+	frecencyScores := s.frecencyScoresSnapshot()
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ag, ok := s.byID[qid]
@@ -101,15 +139,6 @@ func (s *aggregateStore) update(qid, plugin string, elapsed float64, data json.R
 		return nil, false
 	}
 	ag.Results[plugin] = aggResult{ElapsedMs: elapsed, Data: data}
-	frecencyScores := map[string]float64{}
-	if s.frecencyDB != nil {
-		scores, err := s.frecencyDB.GetFrecencyScores(context.Background())
-		if err != nil {
-			log.Printf("[AGG] failed to query frecency scores: %v", err)
-		} else {
-			frecencyScores = scores
-		}
-	}
 	ag.List = orderResults(flattenResults(ag.Results), s.orderingMode, frecencyScores, s.frecencyW)
 	snap, _ := json.Marshal(ag)
 	return snap, true
