@@ -23,7 +23,7 @@ func TestUIServer_AckAndUpdateOverUDS(t *testing.T) {
 	mgr := plugins.NewManager("-")
 	mgr.Plugins[plugName] = &plugins.Plugin{Dir: dir, Config: plugins.PluginConfig{Name: plugName, Entrypoint: filepath.Base(entry), Enabled: true, Lifecycle: plugins.LifecycleOnCall}}
 
-	store := newAggregateStore(10)
+	store := newAggregateStore(10, "global")
 	uiReg := newUIRegistry()
 	reqOut := make(chan pluginRequest, 16)
 	plugReg := &pluginRegistry{conns: map[string]net.Conn{}, scanners: map[string]*bufio.Scanner{}}
@@ -93,7 +93,7 @@ func TestUIServer_SelectAndDetachAck(t *testing.T) {
 	defer cancel()
 
 	mgr := plugins.NewManager("-")
-	store := newAggregateStore(10)
+	store := newAggregateStore(10, "global")
 	uiReg := newUIRegistry()
 	reqOut := make(chan pluginRequest, 16)
 	plugReg := &pluginRegistry{conns: map[string]net.Conn{}, scanners: map[string]*bufio.Scanner{}}

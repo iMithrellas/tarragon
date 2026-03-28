@@ -22,7 +22,7 @@ func TestPersistentPluginE2E(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	store := newAggregateStore(10)
+	store := newAggregateStore(10, "global")
 	uiReg := newUIRegistry()
 	reqOut, plugReg := startPluginListener(ctx, store, uiReg)
 

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"sort"
 	"sync"
 	"time"
 
@@ -24,18 +25,23 @@ type aggregate struct {
 }
 
 type aggregateStore struct {
-	mu       sync.Mutex
-	limit    int
-	order    []string
-	byID     map[string]*aggregate
-	byClient map[string]map[string]struct{}
+	mu           sync.Mutex
+	limit        int
+	orderingMode string
+	order        []string
+	byID         map[string]*aggregate
+	byClient     map[string]map[string]struct{}
 }
 
-func newAggregateStore(limit int) *aggregateStore {
+func newAggregateStore(limit int, orderingMode string) *aggregateStore {
+	if orderingMode == "" {
+		orderingMode = "global"
+	}
 	return &aggregateStore{
-		limit:    limit,
-		byID:     make(map[string]*aggregate),
-		byClient: make(map[string]map[string]struct{}),
+		limit:        limit,
+		orderingMode: orderingMode,
+		byID:         make(map[string]*aggregate),
+		byClient:     make(map[string]map[string]struct{}),
 	}
 }
 
@@ -82,7 +88,7 @@ func (s *aggregateStore) update(qid, plugin string, elapsed float64, data json.R
 		return nil, false
 	}
 	ag.Results[plugin] = aggResult{ElapsedMs: elapsed, Data: data}
-	ag.List = orderResults(flattenResults(ag.Results))
+	ag.List = orderResults(flattenResults(ag.Results), s.orderingMode)
 	snap, _ := json.Marshal(ag)
 	return snap, true
 }
@@ -162,7 +168,8 @@ func parseObjectItem(plugin string, obj map[string]json.RawMessage) (wire.Result
 	if id == "" {
 		id = label
 	}
-	return wire.ResultItem{ID: id, Label: label, Plugin: plugin}, true
+	score := readFloatField(obj, "score")
+	return wire.ResultItem{ID: id, Label: label, Plugin: plugin, Score: score}, true
 }
 
 func readStringField(obj map[string]json.RawMessage, key string) string {
@@ -177,6 +184,18 @@ func readStringField(obj map[string]json.RawMessage, key string) string {
 	return ""
 }
 
+func readFloatField(obj map[string]json.RawMessage, key string) float64 {
+	raw, ok := obj[key]
+	if !ok {
+		return 0
+	}
+	var f float64
+	if json.Unmarshal(raw, &f) == nil {
+		return f
+	}
+	return 0
+}
+
 func toRawMap(m map[string]any) map[string]json.RawMessage {
 	out := make(map[string]json.RawMessage, len(m))
 	for k, v := range m {
@@ -187,9 +206,55 @@ func toRawMap(m map[string]any) map[string]json.RawMessage {
 	return out
 }
 
-func orderResults(items []wire.ResultItem) []wire.ResultItem {
-	// TODO: apply scoring + sorting rules
-	return items
+func orderResults(items []wire.ResultItem, mode string) []wire.ResultItem {
+	if len(items) <= 1 {
+		return items
+	}
+
+	if mode != "grouped" {
+		sort.SliceStable(items, func(i, j int) bool {
+			return items[i].Score > items[j].Score
+		})
+		return items
+	}
+
+	type pluginGroup struct {
+		name     string
+		best     float64
+		items    []wire.ResultItem
+		position int
+	}
+
+	groupIndex := make(map[string]int)
+	groups := make([]pluginGroup, 0)
+	for _, item := range items {
+		idx, ok := groupIndex[item.Plugin]
+		if !ok {
+			idx = len(groups)
+			groupIndex[item.Plugin] = idx
+			groups = append(groups, pluginGroup{
+				name:     item.Plugin,
+				best:     item.Score,
+				items:    []wire.ResultItem{item},
+				position: idx,
+			})
+			continue
+		}
+		if item.Score > groups[idx].best {
+			groups[idx].best = item.Score
+		}
+		groups[idx].items = append(groups[idx].items, item)
+	}
+
+	sort.SliceStable(groups, func(i, j int) bool {
+		return groups[i].best > groups[j].best
+	})
+
+	ordered := make([]wire.ResultItem, 0, len(items))
+	for _, g := range groups {
+		ordered = append(ordered, g.items...)
+	}
+	return ordered
 }
 
 func (s *aggregateStore) removeByClient(client string) int {

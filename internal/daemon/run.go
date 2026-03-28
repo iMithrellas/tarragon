@@ -38,7 +38,11 @@ func RunDaemon() {
 	if maxAgg <= 0 {
 		maxAgg = 64
 	}
-	store := newAggregateStore(maxAgg)
+	orderingMode := viper.GetString("result_ordering")
+	if orderingMode == "" {
+		orderingMode = "global"
+	}
+	store := newAggregateStore(maxAgg, orderingMode)
 	ui := newUIRegistry()
 
 	// Start plugin listener BEFORE spawning plugin processes, so the

@@ -56,6 +56,11 @@ func GetConfigOptions() []ConfigOption {
 			Comment: "Maximum number of aggregates to maintain",
 		},
 		{
+			Key:     "result_ordering",
+			Value:   "global",
+			Comment: "Result ordering mode: global or grouped",
+		},
+		{
 			Key:     "db_path",
 			Value:   db.DefaultPath(),
 			Comment: "Path to the database file",
