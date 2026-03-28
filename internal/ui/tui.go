@@ -59,6 +59,7 @@ type tui struct {
 	conn            net.Conn
 	scanner         *bufio.Scanner
 	writeMu         sync.Mutex
+	renderMu        sync.Mutex
 	clientID        string
 	input, lastSent string
 	lastQID         string
@@ -104,7 +105,7 @@ func (t *tui) loop() {
 	// debounced sender
 	go t.debounceSender()
 	// initial frame
-	redraw(t.input, t.rows, t.sel, t.top, t.lastQID)
+	t.render()
 
 	// key loop
 	rd := os.Stdin
@@ -146,27 +147,42 @@ func (t *tui) loop() {
 			fmt.Println("\r")
 			return
 		case 13, 10: // Enter
+			var selected item
+			doSelect := false
+			t.renderMu.Lock()
 			if t.sel >= 0 && t.sel < len(t.rows) && t.lastQID != "" {
-				t.sendSelect(t.rows[t.sel])
+				selected = t.rows[t.sel]
+				doSelect = true
 			} else if t.input != t.lastSent {
 				t.pendingAt = time.Now().Add(-time.Hour)
 			}
+			t.renderMu.Unlock()
+			if doSelect {
+				t.sendSelect(selected)
+			}
 			t.render()
 		case 127: // Backspace
+			t.renderMu.Lock()
 			if len(t.input) > 0 {
 				t.input = t.input[:len(t.input)-1]
 				t.pendingAt = time.Now()
 			}
 			t.sel, t.top = 0, 0
+			t.renderMu.Unlock()
 			t.render()
 		default:
 			if b >= 32 && b <= 126 {
+				t.renderMu.Lock()
 				t.input += string(b)
 				t.pendingAt = time.Now()
 				t.sel, t.top = 0, 0
+				t.renderMu.Unlock()
 				t.render()
 			}
-			if b == 'q' && t.input == "" {
+			t.renderMu.Lock()
+			emptyInput := t.input == ""
+			t.renderMu.Unlock()
+			if b == 'q' && emptyInput {
 				t.detach()
 				close(t.done)
 				fmt.Println("\r")
@@ -177,15 +193,19 @@ func (t *tui) loop() {
 }
 
 func (t *tui) render() {
+	t.renderMu.Lock()
+	defer t.renderMu.Unlock()
 	redraw(t.input, t.rows, t.sel, t.top, t.lastQID)
 }
 func (t *tui) moveSel(delta int) {
+	t.renderMu.Lock()
 	if delta < 0 && t.sel > 0 {
 		t.sel--
 	} else if delta > 0 && t.sel+1 < len(t.rows) {
 		t.sel++
 	}
 	adjustViewport(&t.top, t.sel, t.rows)
+	t.renderMu.Unlock()
 	t.render()
 }
 
@@ -215,7 +235,9 @@ func (t *tui) recvUpdates() {
 			if json.Unmarshal(raw, &ack) != nil || ack.QueryID == "" {
 				continue
 			}
+			t.renderMu.Lock()
 			t.lastQID = ack.QueryID
+			t.renderMu.Unlock()
 			t.render()
 		case "update":
 			var upd wire.UpdateMessage
@@ -226,7 +248,11 @@ func (t *tui) recvUpdates() {
 			if json.Unmarshal(upd.Payload, &view) != nil || view.QueryID == "" {
 				continue
 			}
-			t.lastQID = view.QueryID
+			t.renderMu.Lock()
+			if t.lastQID == "" || view.QueryID != t.lastQID {
+				t.renderMu.Unlock()
+				continue
+			}
 			var newRows []item
 			for _, it := range view.List {
 				id := it.ID
@@ -250,6 +276,7 @@ func (t *tui) recvUpdates() {
 				}
 			}
 			adjustViewport(&t.top, t.sel, t.rows)
+			t.renderMu.Unlock()
 			t.render()
 		default:
 			continue
@@ -260,9 +287,17 @@ func (t *tui) recvUpdates() {
 func (t *tui) debounceSender() {
 	for {
 		time.Sleep(25 * time.Millisecond)
-		if t.pendingAt.IsZero() || time.Since(t.pendingAt) < time.Duration(t.debounce)*time.Millisecond || t.input == t.lastSent {
-			if !t.pendingAt.IsZero() && t.input == t.lastSent {
+		t.renderMu.Lock()
+		pendingAt := t.pendingAt
+		debounce := t.debounce
+		input := t.input
+		lastSent := t.lastSent
+		t.renderMu.Unlock()
+		if pendingAt.IsZero() || time.Since(pendingAt) < time.Duration(debounce)*time.Millisecond || input == lastSent {
+			if !pendingAt.IsZero() && input == lastSent {
+				t.renderMu.Lock()
 				t.pendingAt = time.Time{}
+				t.renderMu.Unlock()
 			}
 			continue
 		}
@@ -270,14 +305,16 @@ func (t *tui) debounceSender() {
 			continue
 		}
 		t.writeMu.Lock()
-		err := wire.WriteMsg(t.conn, &wire.UIRequest{Type: "query", ClientID: t.clientID, Text: t.input})
+		err := wire.WriteMsg(t.conn, &wire.UIRequest{Type: "query", ClientID: t.clientID, Text: input})
 		t.writeMu.Unlock()
 		if err != nil {
 			continue
 		}
-		t.lastSent, t.rows, t.sel, t.top = t.input, nil, 0, 0
-		t.render()
+		t.renderMu.Lock()
+		t.lastSent, t.rows, t.sel, t.top = input, nil, 0, 0
 		t.pendingAt = time.Time{}
+		t.renderMu.Unlock()
+		t.render()
 	}
 }
 
@@ -286,7 +323,10 @@ func (t *tui) sendSelect(it item) {
 		return
 	}
 	t.writeMu.Lock()
-	_ = wire.WriteMsg(t.conn, &wire.UIRequest{Type: "select", ClientID: t.clientID, QueryID: t.lastQID, Plugin: it.Plugin, Text: it.Choice.ID})
+	t.renderMu.Lock()
+	qid := t.lastQID
+	t.renderMu.Unlock()
+	_ = wire.WriteMsg(t.conn, &wire.UIRequest{Type: "select", ClientID: t.clientID, QueryID: qid, Plugin: it.Plugin, Text: it.Choice.ID})
 	t.writeMu.Unlock()
 }
 
