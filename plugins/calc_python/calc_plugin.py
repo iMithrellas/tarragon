@@ -146,7 +146,7 @@ def _copy_to_clipboard(text: str) -> tuple[bool, str]:
     try:
         subprocess.run(["wl-copy", text], check=True, timeout=5)
         return True, "Copied to clipboard"
-    except FileNotFoundError:
+    except (FileNotFoundError, subprocess.CalledProcessError):
         try:
             subprocess.run(
                 ["xclip", "-selection", "clipboard"],
