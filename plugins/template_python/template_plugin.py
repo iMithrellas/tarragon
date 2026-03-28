@@ -59,7 +59,17 @@ def run_daemon():
         return 0
 
     s = sock_mod.socket(sock_mod.AF_UNIX, sock_mod.SOCK_STREAM)
-    s.connect(endpoint)
+    # Retry connection in case the daemon listener isn't ready yet.
+    import time as _time
+    for attempt in range(20):
+        try:
+            s.connect(endpoint)
+            break
+        except (ConnectionRefusedError, FileNotFoundError):
+            if attempt == 19:
+                logger.error("could not connect to %s after retries", endpoint)
+                return 1
+            _time.sleep(0.1)
     s.sendall(json.dumps({"type": "hello", "name": PLUGIN_NAME}).encode() + b"\n")
     logger.info("connected to %s", endpoint)
 

@@ -23,9 +23,6 @@ func RunDaemon() {
 	if err := mgr.Discover(); err != nil {
 		log.Printf("Plugin discovery error: %v", err)
 	}
-	if err := mgr.StartPersistent(ctx, wire.SocketPlugins); err != nil {
-		log.Printf("Plugin start error: %v", err)
-	}
 	defer mgr.StopAll()
 
 	sigs := make(chan os.Signal, 1)
@@ -44,10 +41,16 @@ func RunDaemon() {
 	store := newAggregateStore(maxAgg)
 	ui := newUIRegistry()
 
-	// Start plugin listener and UI listener.
+	// Start plugin listener BEFORE spawning plugin processes, so the
+	// socket is ready to accept connections when plugins start.
 	reqOut, registry := startPluginListener(ctx, store, ui)
 	if viper.GetBool("run_ipc") {
 		go startUIServer(ctx, mgr, reqOut, registry, store, ui)
+	}
+
+	// Now start persistent plugin processes; the listener is already up.
+	if err := mgr.StartPersistent(ctx, wire.SocketPlugins); err != nil {
+		log.Printf("Plugin start error: %v", err)
 	}
 
 	<-ctx.Done()

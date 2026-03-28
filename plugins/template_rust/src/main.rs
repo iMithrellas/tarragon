@@ -150,7 +150,24 @@ fn main() {
 }
 
 fn run_uds(name: &str, endpoint: &str) -> Result<(), String> {
-    let stream = UnixStream::connect(endpoint).map_err(|e| e.to_string())?;
+    // Retry connection in case the daemon listener isn't ready yet.
+    let stream = {
+        let mut last_err = String::new();
+        let mut conn = None;
+        for _ in 0..20 {
+            match UnixStream::connect(endpoint) {
+                Ok(s) => {
+                    conn = Some(s);
+                    break;
+                }
+                Err(e) => {
+                    last_err = e.to_string();
+                    thread::sleep(Duration::from_millis(100));
+                }
+            }
+        }
+        conn.ok_or(last_err)?
+    };
     let mut writer = stream.try_clone().map_err(|e| e.to_string())?;
     let reader = BufReader::new(stream);
     writeln!(
