@@ -18,23 +18,40 @@ const (
 
 // Message type constants (for plugins)
 const (
-	MsgHello    = "hello"
-	MsgRequest  = "request"
-	MsgResponse = "response"
-	MsgSelect   = "select"
-	MsgStatus   = "status"
+	MsgHello          = "hello"
+	MsgRequest        = "request"
+	MsgResponse       = "response"
+	MsgSelect         = "select"
+	MsgSelectResponse = "select_response"
+	MsgStatus         = "status"
 )
 
+// Action describes a named action a plugin can perform on a result.
+type Action struct {
+	Name        string `json:"name"`
+	Default     bool   `json:"default,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+// SelectResponse is sent from daemon to UI after executing a select action.
+type SelectResponse struct {
+	Type    string `json:"type"`    // "select_response"
+	Success bool   `json:"success"` // whether the action succeeded
+	Message string `json:"message,omitempty"`
+}
+
 // UIRequest is sent from UI to daemon over REQ.
-// Type can be "query" or "detach".
+// Type can be "query", "select", "detach", or "status".
 type UIRequest struct {
 	Type     string `json:"type"`
 	ClientID string `json:"client_id,omitempty"`
 	Text     string `json:"text,omitempty"`
 	// Optional fields for actions such as selection
-	QueryID string `json:"query_id,omitempty"`
-	Plugin  string `json:"plugin,omitempty"`
-	ID      string `json:"id,omitempty"`
+	QueryID  string `json:"query_id,omitempty"`
+	Plugin   string `json:"plugin,omitempty"`
+	ResultID string `json:"result_id,omitempty"`
+	Action   string `json:"action,omitempty"`
+	ID       string `json:"id,omitempty"` // backward compatibility alias for ResultID
 }
 
 // AckMessage is sent from daemon to UI after receiving a query.
@@ -60,11 +77,16 @@ type UpdateMessage struct {
 
 // ResultItem represents a normalized suggestion for UI rendering.
 type ResultItem struct {
-	ID            string  `json:"id"`
-	Label         string  `json:"label,omitempty"`
-	Plugin        string  `json:"plugin"`
-	Score         float64 `json:"score,omitempty"`
-	FrecencyScore float64 `json:"frecency_score,omitempty"`
+	ID            string   `json:"id"`
+	Label         string   `json:"label,omitempty"`
+	Description   string   `json:"description,omitempty"`
+	Icon          string   `json:"icon,omitempty"`
+	Category      string   `json:"category,omitempty"`
+	PreviewPath   string   `json:"preview_path,omitempty"`
+	Plugin        string   `json:"plugin"`
+	Score         float64  `json:"score,omitempty"`
+	FrecencyScore float64  `json:"frecency_score,omitempty"`
+	Actions       []Action `json:"actions,omitempty"`
 }
 
 // PluginHello identifies the plugin to the daemon router.
@@ -78,6 +100,15 @@ type PluginRequest struct {
 	Type    string `json:"type"` // "request"
 	QueryID string `json:"query_id"`
 	Text    string `json:"text"`
+}
+
+// SelectRequest is sent from daemon to a plugin for action execution.
+type SelectRequest struct {
+	Type     string `json:"type"`
+	Plugin   string `json:"plugin,omitempty"`
+	ResultID string `json:"result_id"`
+	Action   string `json:"action"`
+	QueryID  string `json:"query_id"`
 }
 
 // PluginResponse is sent from plugin to daemon.

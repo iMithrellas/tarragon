@@ -221,7 +221,21 @@ func parseObjectItem(plugin string, obj map[string]json.RawMessage) (wire.Result
 	}
 	score := readFloatField(obj, "score")
 	actions := readActionsField(obj, "actions")
-	return wire.ResultItem{ID: id, Label: label, Plugin: plugin, Score: score, Actions: actions}, true
+	description := readStringField(obj, "description")
+	icon := readStringField(obj, "icon")
+	category := readStringField(obj, "category")
+	previewPath := readStringField(obj, "preview_path")
+	return wire.ResultItem{
+		ID:          id,
+		Label:       label,
+		Description: description,
+		Icon:        icon,
+		Category:    category,
+		PreviewPath: previewPath,
+		Plugin:      plugin,
+		Score:       score,
+		Actions:     actions,
+	}, true
 }
 
 func readStringField(obj map[string]json.RawMessage, key string) string {
