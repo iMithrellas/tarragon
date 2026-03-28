@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/iMithrellas/tarragon/internal/db"
 	"github.com/iMithrellas/tarragon/internal/plugins"
 	"github.com/iMithrellas/tarragon/internal/wire"
 )
@@ -23,12 +24,12 @@ func TestUIServer_AckAndUpdateOverUDS(t *testing.T) {
 	mgr := plugins.NewManager("-")
 	mgr.Plugins[plugName] = &plugins.Plugin{Dir: dir, Config: plugins.PluginConfig{Name: plugName, Entrypoint: filepath.Base(entry), Enabled: true, Lifecycle: plugins.LifecycleOnCall}}
 
-	store := newAggregateStore(10, "global")
+	store := newAggregateStore(10, "global", nil, 0.3)
 	uiReg := newUIRegistry()
 	reqOut := make(chan pluginRequest, 16)
 	plugReg := &pluginRegistry{conns: map[string]net.Conn{}, scanners: map[string]*bufio.Scanner{}}
 
-	go startUIServer(ctx, mgr, reqOut, plugReg, store, uiReg)
+	go startUIServer(ctx, mgr, reqOut, plugReg, store, uiReg, nil)
 
 	deadline := time.Now().Add(3 * time.Second)
 	var conn net.Conn
@@ -93,7 +94,14 @@ func TestUIServer_SelectAndDetachAck(t *testing.T) {
 	defer cancel()
 
 	mgr := plugins.NewManager("-")
-	store := newAggregateStore(10, "global")
+	dir := t.TempDir()
+	database, openErr := db.Open(filepath.Join(dir, "frecency.db"))
+	if openErr != nil {
+		t.Fatalf("open db: %v", openErr)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	store := newAggregateStore(10, "global", database, 0.3)
 	uiReg := newUIRegistry()
 	reqOut := make(chan pluginRequest, 16)
 	plugReg := &pluginRegistry{conns: map[string]net.Conn{}, scanners: map[string]*bufio.Scanner{}}
@@ -102,7 +110,7 @@ func TestUIServer_SelectAndDetachAck(t *testing.T) {
 	plugReg.set("plug_connected", c1, wire.NewScanner(c1))
 	defer func() { _ = c2.Close() }()
 
-	go startUIServer(ctx, mgr, reqOut, plugReg, store, uiReg)
+	go startUIServer(ctx, mgr, reqOut, plugReg, store, uiReg, database)
 
 	deadline := time.Now().Add(3 * time.Second)
 	var conn net.Conn
@@ -120,7 +128,7 @@ func TestUIServer_SelectAndDetachAck(t *testing.T) {
 	defer func() { _ = conn.Close() }()
 
 	scanner := wire.NewScanner(conn)
-	if err := wire.WriteMsg(conn, &wire.UIRequest{Type: "select", ClientID: "cli-test", QueryID: "q-1", Plugin: "plug_connected", Text: "id-123"}); err != nil {
+	if err := wire.WriteMsg(conn, &wire.UIRequest{Type: "select", ClientID: "cli-test", QueryID: "q-1", Plugin: "plug_connected", ID: "id-123"}); err != nil {
 		t.Fatalf("write select: %v", err)
 	}
 	var okMsg map[string]any
@@ -133,11 +141,29 @@ func TestUIServer_SelectAndDetachAck(t *testing.T) {
 
 	select {
 	case msg := <-reqOut:
-		if msg.name != "plug_connected" || msg.queryID != "q-1" || msg.msgType != wire.MsgSelect {
+		if msg.name != "plug_connected" || msg.queryID != "q-1" || msg.msgType != wire.MsgSelect || msg.text != "id-123" {
 			t.Fatalf("unexpected forwarded select: %+v", msg)
 		}
 	case <-time.After(time.Second):
 		t.Fatalf("expected select forwarded")
+	}
+
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		scores, serr := database.GetFrecencyScores(context.Background())
+		if serr != nil {
+			t.Fatalf("get frecency scores: %v", serr)
+		}
+		if scores["plug_connected:id-123"] > 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := func() float64 {
+		scores, _ := database.GetFrecencyScores(context.Background())
+		return scores["plug_connected:id-123"]
+	}(); got <= 0 {
+		t.Fatalf("expected frecency score for recorded selection, got %v", got)
 	}
 
 	if err := wire.WriteMsg(conn, &wire.UIRequest{Type: "detach", ClientID: "cli-test"}); err != nil {

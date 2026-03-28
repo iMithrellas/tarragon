@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"time"
@@ -154,4 +155,80 @@ func (d *DB) InsertMetric(ctx context.Context, typ string, jsonData string) erro
 		return fmt.Errorf("insert metric: %w", err)
 	}
 	return nil
+}
+
+// RecordSelection upserts execution metadata for a selected result item.
+// Rows are keyed by plugin + value with an empty context.
+func (d *DB) RecordSelection(ctx context.Context, plugin, id string) error {
+	if d == nil || d.SQL == nil {
+		return errors.New("nil DB")
+	}
+	if plugin == "" || id == "" {
+		return errors.New("plugin and id are required")
+	}
+
+	now := time.Now().Unix()
+	_, err := d.SQL.ExecContext(ctx, `
+		INSERT INTO frecency(plugin, value, context, last_exec_ts, exec_count, updated_at, last_seen_ts)
+		VALUES(?, ?, '', ?, 1, ?, ?)
+		ON CONFLICT(plugin, value, context)
+		DO UPDATE SET
+			exec_count = frecency.exec_count + 1,
+			last_exec_ts = excluded.last_exec_ts,
+			updated_at = excluded.updated_at,
+			last_seen_ts = excluded.last_seen_ts;
+	`, plugin, id, now, now, now)
+	if err != nil {
+		return fmt.Errorf("record selection: %w", err)
+	}
+	return nil
+}
+
+// GetFrecencyScores returns a score map keyed as "plugin:id".
+// score = exec_count * exp(-lambda * days_since_last_exec), lambda=0.1
+func (d *DB) GetFrecencyScores(ctx context.Context) (map[string]float64, error) {
+	if d == nil || d.SQL == nil {
+		return nil, errors.New("nil DB")
+	}
+
+	rows, err := d.SQL.QueryContext(ctx, `
+		SELECT plugin, value, exec_count, last_exec_ts
+		FROM frecency
+		WHERE plugin IS NOT NULL
+		  AND value IS NOT NULL
+		  AND context = '';
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("query frecency scores: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	const lambda = 0.1
+	now := time.Now().Unix()
+	out := make(map[string]float64)
+	for rows.Next() {
+		var plugin, value string
+		var execCount int64
+		var lastExecTS int64
+		if err := rows.Scan(&plugin, &value, &execCount, &lastExecTS); err != nil {
+			return nil, fmt.Errorf("scan frecency row: %w", err)
+		}
+
+		daysSince := 0.0
+		if lastExecTS > 0 {
+			sec := now - lastExecTS
+			if sec < 0 {
+				sec = 0
+			}
+			daysSince = float64(sec) / (24 * 60 * 60)
+		}
+
+		score := float64(execCount) * math.Exp(-lambda*daysSince)
+		out[plugin+":"+value] = score
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate frecency rows: %w", err)
+	}
+
+	return out, nil
 }

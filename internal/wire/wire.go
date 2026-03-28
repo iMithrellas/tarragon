@@ -34,6 +34,7 @@ type UIRequest struct {
 	// Optional fields for actions such as selection
 	QueryID string `json:"query_id,omitempty"`
 	Plugin  string `json:"plugin,omitempty"`
+	ID      string `json:"id,omitempty"`
 }
 
 // AckMessage is sent from daemon to UI after receiving a query.
@@ -59,10 +60,11 @@ type UpdateMessage struct {
 
 // ResultItem represents a normalized suggestion for UI rendering.
 type ResultItem struct {
-	ID     string  `json:"id"`
-	Label  string  `json:"label,omitempty"`
-	Plugin string  `json:"plugin"`
-	Score  float64 `json:"score,omitempty"`
+	ID            string  `json:"id"`
+	Label         string  `json:"label,omitempty"`
+	Plugin        string  `json:"plugin"`
+	Score         float64 `json:"score,omitempty"`
+	FrecencyScore float64 `json:"frecency_score,omitempty"`
 }
 
 // PluginHello identifies the plugin to the daemon router.

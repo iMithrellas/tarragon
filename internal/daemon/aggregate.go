@@ -1,11 +1,14 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
+	"log"
 	"sort"
 	"sync"
 	"time"
 
+	"github.com/iMithrellas/tarragon/internal/db"
 	"github.com/iMithrellas/tarragon/internal/wire"
 )
 
@@ -28,18 +31,28 @@ type aggregateStore struct {
 	mu           sync.Mutex
 	limit        int
 	orderingMode string
+	frecencyDB   *db.DB
+	frecencyW    float64
 	order        []string
 	byID         map[string]*aggregate
 	byClient     map[string]map[string]struct{}
 }
 
-func newAggregateStore(limit int, orderingMode string) *aggregateStore {
+func newAggregateStore(limit int, orderingMode string, frecencyDB *db.DB, frecencyWeight float64) *aggregateStore {
 	if orderingMode == "" {
 		orderingMode = "global"
+	}
+	if frecencyWeight < 0 {
+		frecencyWeight = 0
+	}
+	if frecencyWeight > 1 {
+		frecencyWeight = 1
 	}
 	return &aggregateStore{
 		limit:        limit,
 		orderingMode: orderingMode,
+		frecencyDB:   frecencyDB,
+		frecencyW:    frecencyWeight,
 		byID:         make(map[string]*aggregate),
 		byClient:     make(map[string]map[string]struct{}),
 	}
@@ -88,7 +101,16 @@ func (s *aggregateStore) update(qid, plugin string, elapsed float64, data json.R
 		return nil, false
 	}
 	ag.Results[plugin] = aggResult{ElapsedMs: elapsed, Data: data}
-	ag.List = orderResults(flattenResults(ag.Results), s.orderingMode)
+	frecencyScores := map[string]float64{}
+	if s.frecencyDB != nil {
+		scores, err := s.frecencyDB.GetFrecencyScores(context.Background())
+		if err != nil {
+			log.Printf("[AGG] failed to query frecency scores: %v", err)
+		} else {
+			frecencyScores = scores
+		}
+	}
+	ag.List = orderResults(flattenResults(ag.Results), s.orderingMode, frecencyScores, s.frecencyW)
 	snap, _ := json.Marshal(ag)
 	return snap, true
 }
@@ -206,9 +228,16 @@ func toRawMap(m map[string]any) map[string]json.RawMessage {
 	return out
 }
 
-func orderResults(items []wire.ResultItem, mode string) []wire.ResultItem {
+func orderResults(items []wire.ResultItem, mode string, frecencyScores map[string]float64, weight float64) []wire.ResultItem {
 	if len(items) <= 1 {
+		if len(items) == 1 {
+			items[0] = applyFrecency(items[0], frecencyScores, weight)
+		}
 		return items
+	}
+
+	for i := range items {
+		items[i] = applyFrecency(items[i], frecencyScores, weight)
 	}
 
 	if mode != "grouped" {
@@ -255,6 +284,20 @@ func orderResults(items []wire.ResultItem, mode string) []wire.ResultItem {
 		ordered = append(ordered, g.items...)
 	}
 	return ordered
+}
+
+func applyFrecency(item wire.ResultItem, frecencyScores map[string]float64, weight float64) wire.ResultItem {
+	if weight < 0 {
+		weight = 0
+	}
+	if weight > 1 {
+		weight = 1
+	}
+	key := item.Plugin + ":" + item.ID
+	f := frecencyScores[key]
+	item.FrecencyScore = f
+	item.Score = (1-weight)*item.Score + weight*f
+	return item
 }
 
 func (s *aggregateStore) removeByClient(client string) int {

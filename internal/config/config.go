@@ -65,6 +65,11 @@ func GetConfigOptions() []ConfigOption {
 			Value:   db.DefaultPath(),
 			Comment: "Path to the database file",
 		},
+		{
+			Key:     "frecency_weight",
+			Value:   0.3,
+			Comment: "Blend weight for frecency in result scoring (0..1)",
+		},
 	}
 }
 

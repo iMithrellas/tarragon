@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/iMithrellas/tarragon/internal/db"
 	"github.com/iMithrellas/tarragon/internal/plugins"
 	"github.com/iMithrellas/tarragon/internal/wire"
 )
@@ -87,7 +88,7 @@ func (r *uiRegistry) publish(msg *wire.UpdateMessage) {
 	}
 }
 
-func startUIServer(ctx context.Context, mgr *plugins.Manager, reqOut chan<- pluginRequest, pluginsReg *pluginRegistry, store *aggregateStore, ui *uiRegistry) {
+func startUIServer(ctx context.Context, mgr *plugins.Manager, reqOut chan<- pluginRequest, pluginsReg *pluginRegistry, store *aggregateStore, ui *uiRegistry, frecencyDB *db.DB) {
 	ln, err := wire.ListenUnix(wire.SocketUI)
 	if err != nil {
 		log.Fatalf("[UI] failed to listen on %s: %v", wire.SocketUI, err)
@@ -108,11 +109,11 @@ func startUIServer(ctx context.Context, mgr *plugins.Manager, reqOut chan<- plug
 			log.Printf("[UI] accept error: %v", err)
 			continue
 		}
-		go handleUIClient(ctx, conn, mgr, reqOut, pluginsReg, store, ui)
+		go handleUIClient(ctx, conn, mgr, reqOut, pluginsReg, store, ui, frecencyDB)
 	}
 }
 
-func handleUIClient(ctx context.Context, conn net.Conn, mgr *plugins.Manager, reqOut chan<- pluginRequest, pluginsReg *pluginRegistry, store *aggregateStore, ui *uiRegistry) {
+func handleUIClient(ctx context.Context, conn net.Conn, mgr *plugins.Manager, reqOut chan<- pluginRequest, pluginsReg *pluginRegistry, store *aggregateStore, ui *uiRegistry, frecencyDB *db.DB) {
 	scanner := wire.NewScanner(conn)
 	uid := fmt.Sprintf("ui-%d", time.Now().UnixNano())
 	client := &uiClient{conn: conn, scanner: scanner, clientID: uid}
@@ -145,8 +146,19 @@ func handleUIClient(ctx context.Context, conn net.Conn, mgr *plugins.Manager, re
 			_ = wire.WriteMsg(conn, map[string]any{"type": "ok"})
 			continue
 		case "select":
+			selectedID := parsed.ID
+			if selectedID == "" {
+				selectedID = parsed.Text
+			}
+			if frecencyDB != nil && parsed.Plugin != "" && selectedID != "" {
+				go func(plugin, id string) {
+					if err := frecencyDB.RecordSelection(context.Background(), plugin, id); err != nil {
+						log.Printf("[UI] failed to record selection %s:%s: %v", plugin, id, err)
+					}
+				}(parsed.Plugin, selectedID)
+			}
 			if parsed.Plugin != "" && parsed.QueryID != "" && pluginsReg.isConnected(parsed.Plugin) {
-				reqOut <- pluginRequest{name: parsed.Plugin, queryID: parsed.QueryID, text: parsed.Text, msgType: wire.MsgSelect}
+				reqOut <- pluginRequest{name: parsed.Plugin, queryID: parsed.QueryID, text: selectedID, msgType: wire.MsgSelect}
 			}
 			_ = wire.WriteMsg(conn, map[string]any{"type": "ok"})
 			continue
