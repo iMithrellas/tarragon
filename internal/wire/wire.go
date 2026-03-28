@@ -1,12 +1,24 @@
 package wire
 
-import "encoding/json"
+import (
+	"bufio"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"os"
+)
 
-// Endpoints used across daemon and UI
+// Unix socket paths used across daemon and clients.
 const (
-	EndpointUIReq   = "ipc:///tmp/tarragon-ui.ipc"      // REQ/REP for query initiation
-	EndpointUISub   = "ipc:///tmp/tarragon-updates.ipc" // PUB/SUB for async updates
-	EndpointPlugins = "ipc:///tmp/tarragon-plugins.ipc" // ROUTER for plugin workers
+	SocketUI      = "/tmp/tarragon-ui.sock"
+	SocketPlugins = "/tmp/tarragon-plugins.sock"
+
+	// Backwards-compatible aliases during multi-workstream migration.
+	EndpointUIReq   = SocketUI
+	EndpointUISub   = SocketUI
+	EndpointPlugins = SocketPlugins
 )
 
 // Message type constants (for plugins)
@@ -68,4 +80,65 @@ type PluginResponse struct {
 	Type    string          `json:"type"` // "response"
 	QueryID string          `json:"query_id"`
 	Data    json.RawMessage `json:"data"`
+}
+
+const maxNDJSONLineSize = 1 << 20 // 1MB
+
+// WriteMsg marshals v as JSON and writes it as a single NDJSON line.
+//
+// If multiple goroutines share the same connection/writer, callers must
+// serialize access (for example with a connection-scoped sync.Mutex).
+func WriteMsg(w io.Writer, v any) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	if _, err := w.Write(append(b, '\n')); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ReadMsg reads one NDJSON line from scanner and unmarshals it into v.
+func ReadMsg(scanner *bufio.Scanner, v any) error {
+	if scanner.Scan() {
+		return json.Unmarshal(scanner.Bytes(), v)
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	return io.EOF
+}
+
+// NewScanner creates a scanner configured for NDJSON with 1MB max line size.
+func NewScanner(r io.Reader) *bufio.Scanner {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxNDJSONLineSize)
+	return scanner
+}
+
+// CleanupSocket removes a stale unix socket file if it exists.
+func CleanupSocket(path string) error {
+	fi, err := os.Stat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+
+	if fi.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("%s exists and is not a socket", path)
+	}
+
+	return os.Remove(path)
+}
+
+// ListenUnix creates a unix listener after cleaning up stale socket files.
+func ListenUnix(path string) (net.Listener, error) {
+	if err := CleanupSocket(path); err != nil {
+		return nil, err
+	}
+	return net.Listen("unix", path)
 }
