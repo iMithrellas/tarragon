@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::env;
-use std::io::{self, Write};
+use std::io::{self, BufRead, BufReader, Write};
+use std::os::unix::net::UnixStream;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -44,7 +45,11 @@ fn transforms() -> Vec<fn(&str) -> String> {
             let (mut out, mut t) = (String::new(), false);
             for c in s.chars() {
                 if c.is_alphabetic() {
-                    out.push(if t { c.to_ascii_uppercase() } else { c.to_ascii_lowercase() });
+                    out.push(if t {
+                        c.to_ascii_uppercase()
+                    } else {
+                        c.to_ascii_lowercase()
+                    });
                     t = !t;
                 } else {
                     out.push(c);
@@ -132,8 +137,8 @@ fn main() {
     if let Ok(endpoint) = env::var("TARRAGON_PLUGINS_ENDPOINT") {
         let name = env::var("TARRAGON_PLUGIN_NAME").unwrap_or("template_rust".into());
         log(&format!("connecting to {}", endpoint));
-        if let Err(e) = run_zmq(&name, &endpoint) {
-            log(&format!("zmq error: {}", e));
+        if let Err(e) = run_uds(&name, &endpoint) {
+            log(&format!("uds error: {}", e));
         }
         return;
     }
@@ -144,24 +149,23 @@ fn main() {
     }
 }
 
-fn run_zmq(name: &str, endpoint: &str) -> Result<(), String> {
-    let ctx = zmq::Context::new();
-    let sock = ctx.socket(zmq::DEALER).map_err(|e| e.to_string())?;
-    sock.set_identity(name.as_bytes()).map_err(|e| e.to_string())?;
-    sock.connect(endpoint).map_err(|e| e.to_string())?;
-    sock.send(
-        format!("{{\"type\":\"hello\",\"name\":{}}}", json_str(name)).as_bytes(),
-        0,
+fn run_uds(name: &str, endpoint: &str) -> Result<(), String> {
+    let stream = UnixStream::connect(endpoint).map_err(|e| e.to_string())?;
+    let mut writer = stream.try_clone().map_err(|e| e.to_string())?;
+    let reader = BufReader::new(stream);
+    writeln!(
+        writer,
+        "{}",
+        format!("{{\"type\":\"hello\",\"name\":{}}}", json_str(name))
     )
     .map_err(|e| e.to_string())?;
     log("connected");
 
     let mut map: HashMap<String, Vec<String>> = HashMap::new();
 
-    loop {
-        let msg = sock.recv_msg(0).map_err(|e| e.to_string())?;
-        let data = String::from_utf8_lossy(&msg);
-        let (typ, qid, text) = parse_json(&data);
+    for line in reader.lines() {
+        let line = line.map_err(|e| e.to_string())?;
+        let (typ, qid, text) = parse_json(&line);
 
         match typ.as_deref() {
             Some("request") => {
@@ -173,7 +177,7 @@ fn run_zmq(name: &str, endpoint: &str) -> Result<(), String> {
                     "{{\"type\":\"response\",\"query_id\":{},\"data\":{{\"input\":{},\"variants\":[{{\"id\":\"1\",\"label\":{}}},{{\"id\":\"2\",\"label\":{}}},{{\"id\":\"3\",\"label\":{}}}]}}}}",
                     json_str(&qid), json_str(&text), json_str(&v[0]), json_str(&v[1]), json_str(&v[2])
                 );
-                sock.send(resp.as_bytes(), 0).map_err(|e| e.to_string())?;
+                writeln!(writer, "{}", resp).map_err(|e| e.to_string())?;
                 log(&format!("response sent qid={}", qid));
             }
             Some("select") => {
@@ -185,11 +189,16 @@ fn run_zmq(name: &str, endpoint: &str) -> Result<(), String> {
                     .and_then(|i| map.get(&qid)?.get(i.wrapping_sub(1)))
                     .cloned()
                     .unwrap_or_default();
-                log(&format!("selection qid={} token={} val={}", qid, token, val));
+                log(&format!(
+                    "selection qid={} token={} val={}",
+                    qid, token, val
+                ));
             }
             _ => {}
         }
     }
+
+    Ok(())
 }
 
 fn parse_json(s: &str) -> (Option<String>, Option<String>, Option<String>) {

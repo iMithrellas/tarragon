@@ -10,14 +10,10 @@ import logging
 import math
 import os
 import re
+import socket as sock_mod
 import signal
 import sys
 import ast
-
-try:
-    import zmq
-except ImportError:
-    zmq = None
 
 PLUGIN_NAME = os.environ.get("TARRAGON_PLUGIN_NAME", "calculator")
 logging.basicConfig(
@@ -142,27 +138,27 @@ def run_daemon():
     logger.info("initializing")
     endpoint = os.environ.get("TARRAGON_PLUGINS_ENDPOINT")
 
-    if not endpoint or not zmq:
-        if endpoint:
-            logger.error("pyzmq not available; install with 'pip install pyzmq'")
+    if not endpoint:
         logger.info("started successfully; idle mode")
         signal.pause()
         return 0
 
-    ctx = zmq.Context.instance()
-    sock = ctx.socket(zmq.DEALER)
-    sock.setsockopt(zmq.IDENTITY, PLUGIN_NAME.encode())
-    sock.connect(endpoint)
-    sock.send(json.dumps({"type": "hello", "name": PLUGIN_NAME}).encode())
+    s = sock_mod.socket(sock_mod.AF_UNIX, sock_mod.SOCK_STREAM)
+    s.connect(endpoint)
+    s.sendall(json.dumps({"type": "hello", "name": PLUGIN_NAME}).encode() + b"\n")
     logger.info("connected to %s", endpoint)
 
+    f = s.makefile("r")
     stop = False
     signal.signal(signal.SIGTERM, lambda *_: globals().update(stop=True))
     signal.signal(signal.SIGINT, lambda *_: globals().update(stop=True))
 
     while not stop:
         try:
-            msg = json.loads(sock.recv().decode())
+            line = f.readline()
+            if not line:
+                break
+            msg = json.loads(line)
         except Exception as e:
             logger.error("recv error: %s", e)
             break
@@ -181,7 +177,7 @@ def run_daemon():
                     "results": results,
                 },
             }
-            sock.send(json.dumps(resp).encode())
+            s.sendall(json.dumps(resp).encode() + b"\n")
             logger.info("response sent qid=%s", qid)
         elif typ == "select":
             token = msg.get("text", "")
