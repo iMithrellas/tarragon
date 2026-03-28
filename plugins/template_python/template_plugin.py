@@ -12,6 +12,7 @@ import os
 import random
 import socket as sock_mod
 import signal
+import subprocess
 import sys
 
 # Setup logging
@@ -46,6 +47,20 @@ TRANSFORMS = [
 def process(text: str) -> list[str]:
     """Generate 3 random text transformations."""
     return [fn(text) for fn in random.sample(TRANSFORMS, k=3)]
+
+
+def _copy_to_clipboard(text: str) -> tuple[bool, str]:
+    """Copy text to clipboard. Tries wl-copy (Wayland), falls back to xclip (X11)."""
+    for cmd in [["wl-copy", "--", text], ["xclip", "-selection", "clipboard"]]:
+        try:
+            inp = text.encode() if "xclip" in cmd else None
+            subprocess.run(cmd, input=inp, check=True, timeout=5)
+            return True, "Copied to clipboard"
+        except FileNotFoundError:
+            continue
+        except subprocess.SubprocessError as e:
+            return False, str(e)
+    return False, "No clipboard tool found (install wl-copy or xclip)"
 
 
 def run_daemon():
@@ -106,7 +121,17 @@ def run_daemon():
                     "data": {
                         "input": text,
                         "variants": [
-                            {"id": str(i + 1), "label": v}
+                            {
+                                "id": str(i + 1),
+                                "label": v,
+                                "actions": [
+                                    {
+                                        "name": "copy",
+                                        "default": True,
+                                        "description": "Copy to clipboard",
+                                    }
+                                ],
+                            }
                             for i, v in enumerate(variants)
                         ],
                     },
@@ -118,13 +143,25 @@ def run_daemon():
             logger.info("response sent qid=%s", qid)
 
         elif typ == "select":
-            token = msg.get("text", "")
+            result_id = msg.get("result_id", "")
+            action = msg.get("action", "")
+            logger.info("select qid=%s result_id=%s action=%s", qid, result_id, action)
+            # Look up the variant text by result_id (which is "1", "2", or "3")
             try:
-                idx = int(token) - 1
+                idx = int(result_id) - 1
                 val = variants_map.get(qid, [])[idx]
             except (ValueError, IndexError):
                 val = None
-            logger.info("selection qid=%s token=%s value=%s", qid, token, val)
+            if val is None:
+                success, message = False, f"Unknown result: {result_id}"
+            else:
+                success, message = _copy_to_clipboard(val)
+            resp = {
+                "type": "select_response",
+                "success": success,
+                "message": message,
+            }
+            s.sendall(json.dumps(resp).encode() + b"\n")
 
     logger.info("exiting")
     return 0
