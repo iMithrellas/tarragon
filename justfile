@@ -196,6 +196,16 @@ plugin-install-all:
         make -C "$dir" install
     done
 
+# Install a remote plugin from a git URL
+[doc("Install remote plugin: just install-remote-plugin <url>")]
+install-remote-plugin url: build
+    {{ build_output }} install-plugin {{ url }}
+
+# Uninstall a previously installed remote plugin by name
+[doc("Uninstall remote plugin: just uninstall-remote-plugin <name>")]
+uninstall-remote-plugin name: build
+    {{ build_output }} uninstall-plugin {{ name }}
+
 # ─── Shell Completions ───────────────────────────────────────────
 
 # Generate shell completions (bash, zsh, fish, powershell)
