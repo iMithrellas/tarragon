@@ -4,10 +4,10 @@ Disclaimer: This documentation was created with the help of an AI assistant. It 
 
 This guide explains how to implement a plugin that integrates with the Tarragon daemon. Two modes are supported:
 
-1) Preferred (fast): persistent process speaking ZeroMQ DEALER to the daemon ROUTER.
+1) Preferred (fast): persistent process speaking NDJSON over a Unix Domain Socket to the daemon.
 2) Fallback (simple): `--once <text>` CLI that prints a single JSON response to stdout.
 
-The daemon can use either path; it prefers ZMQ if your plugin connects and falls back to `--once` if not.
+The daemon can use either path; it prefers the persistent socket mode when your plugin connects and falls back to `--once` if not.
 
 ## Directory Layout and Install
 
@@ -48,69 +48,82 @@ icon = "calc.png"  # Optional: Icon path
 ```
 
 Lifecycle modes:
-- `daemon`: started and managed persistently by the launcher; should speak ZMQ.
+- `daemon`: started and managed persistently by the launcher; should speak NDJSON over a Unix Domain Socket.
 - `on_demand_persistent`: started when first needed and kept while the UI is attached (future flow).
 - `on_call`: executed per request via `--once` (no persistent connection required).
 
-## ZMQ Protocol (Recommended)
+## Unix Domain Socket + NDJSON Protocol (Recommended)
 
-Endpoint: `ipc:///tmp/tarragon-plugins.ipc` (ROUTER on daemon side)
+Endpoint: `/tmp/tarragon-plugins.sock` (daemon listener)
 
-Handshake:
-1) Connect a DEALER socket; set identity to your plugin name (optional but helpful).
-2) Send: `{ "type": "hello", "name": "<plugin-name>" }`
+Protocol:
+1) Connect to the Unix socket path from `TARRAGON_PLUGINS_ENDPOINT`.
+2) Send hello (one NDJSON line):
+   - `{ "type": "hello", "name": "<plugin-name>" }\n`
 3) Loop:
-   - Receive: `{ "type": "request", "query_id": "<id>", "text": "<input>" }`
-   - Process and send: `{ "type": "response", "query_id": "<id>", "data": <your JSON> }`
+   - Receive request (one NDJSON line):
+     - `{ "type": "request", "query_id": "<id>", "text": "<input>" }\n`
+   - Process and send response (one NDJSON line):
+     - `{ "type": "response", "query_id": "<id>", "data": <your JSON> }\n`
+
+NDJSON framing means each message is exactly one JSON object on one line, terminated by `\n`.
 
 The daemon measures latency and merges your response into the UI snapshot.
 
 Environment variables passed to daemon‑mode plugins:
-- `TARRAGON_PLUGINS_ENDPOINT`: ROUTER endpoint to connect to.
+- `TARRAGON_PLUGINS_ENDPOINT`: Unix socket path to connect to (for example, `/tmp/tarragon-plugins.sock`).
 - `TARRAGON_PLUGIN_NAME`: The configured plugin name.
 
-### Python (pyzmq) skeleton
+### Python skeleton
 
-```
-import json, os, zmq
+```python
+import json, os, socket
 
-endpoint = os.environ.get("TARRAGON_PLUGINS_ENDPOINT", "ipc:///tmp/tarragon-plugins.ipc")
+endpoint = os.environ.get("TARRAGON_PLUGINS_ENDPOINT", "/tmp/tarragon-plugins.sock")
 name = os.environ.get("TARRAGON_PLUGIN_NAME", "my_plugin")
 
-ctx = zmq.Context.instance()
-sock = ctx.socket(zmq.DEALER)
-sock.setsockopt(zmq.IDENTITY, name.encode())
-sock.connect(endpoint)
-sock.send_json({"type":"hello","name":name})
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.connect(endpoint)
+s.sendall(json.dumps({"type": "hello", "name": name}).encode() + b"\n")
 
+f = s.makefile('r')
 while True:
-    msg = sock.recv_json()
+    line = f.readline()
+    if not line:
+        break
+    msg = json.loads(line)
     if msg.get("type") != "request":
         continue
     qid, text = msg["query_id"], msg["text"]
     data = {"echo": text}
-    sock.send_json({"type":"response","query_id":qid,"data":data})
+    s.sendall(json.dumps({"type": "response", "query_id": qid, "data": data}).encode() + b"\n")
 ```
 
-### Rust (zmq crate) skeleton
+### Rust skeleton
 
-```
-let ctx = zmq::Context::new();
-let sock = ctx.socket(zmq::DEALER)?;
-sock.set_identity(b"my_plugin")?;
-sock.connect("ipc:///tmp/tarragon-plugins.ipc")?;
-sock.send(r#"{"type":"hello","name":"my_plugin"}"#, 0)?;
-loop {
-    let msg = sock.recv_msg(0)?;
+```rust
+use std::os::unix::net::UnixStream;
+use std::io::{BufRead, BufReader, Write};
+
+let endpoint = std::env::var("TARRAGON_PLUGINS_ENDPOINT")
+    .unwrap_or("/tmp/tarragon-plugins.sock".into());
+let stream = UnixStream::connect(&endpoint)?;
+let mut writer = stream.try_clone()?;
+let reader = BufReader::new(stream);
+
+writeln!(writer, r#"{{"type":"hello","name":"my_plugin"}}"#)?;
+
+for line in reader.lines() {
+    let line = line?;
     // parse JSON {type:"request", query_id, text}
     // build response {type:"response", query_id, data}
-    sock.send(response_json, 0)?;
+    writeln!(writer, "{}", response_json)?;
 }
 ```
 
 ## Fallback CLI (`--once`)
 
-If your plugin does not use ZMQ, support a simple command-line path:
+If your plugin does not use persistent socket mode, support a simple command-line path:
 
 ```
 $ my_plugin --once "hello world"
@@ -125,7 +138,7 @@ $ my_plugin --once "hello world"
 Your Makefile must define the following targets:
 
 ```
-check-deps:   # verify required toolchain (e.g., python3/pyzmq or cargo/rustc)
+check-deps:   # verify required toolchain (e.g., python3 or cargo/rustc)
 install:      # build and copy files into ~/.local/lib/tarragon/plugins/<name>/
 uninstall:    # remove installed files from the plugin directory
 run:          # local quick test (e.g., --once "Hello")
@@ -141,7 +154,6 @@ INSTALL_ROOT := $(HOME)/.local/lib/tarragon/plugins/$(PLUGIN_NAME)
 
 check-deps:
 	@command -v python3 >/dev/null || { echo "python3 missing" >&2; exit 1; }
-	@python3 -c 'import zmq' || { echo "pyzmq missing (pip install --user pyzmq)" >&2; exit 1; }
 
 install: check-deps
 	@mkdir -p $(INSTALL_ROOT)
@@ -157,12 +169,12 @@ run:
 
 ## Logging
 
-- Log initialization and readiness clearly (e.g., after sending HELLO for ZMQ).
+- Log initialization and readiness clearly (e.g., after sending the hello message over the socket).
 - Log each request/response pair with the `query_id` to aid tracing.
 - For long-running plugins, add periodic heartbeat logs.
 
 ## Security & Resource Notes
 
 - Treat input as untrusted; validate/escape as needed in shell calls.
-- Avoid expensive initialization in per-request paths; prefer the ZMQ persistent connection for performance.
+- Avoid expensive initialization in per-request paths; prefer the persistent Unix socket connection for performance.
 - Keep stdout strictly for protocol JSON in `--once` mode.
