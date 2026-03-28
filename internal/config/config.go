@@ -216,7 +216,7 @@ func GenerateConfig(path string, format ConfigFormat) error {
 func generateTOML(options []ConfigOption) string {
 	var sb strings.Builder
 	for _, opt := range options {
-		_, _ = fmt.Fprintf(&sb, "# %s\n", opt.Comment)
+		fmt.Fprintf(&sb, "# %s\n", opt.Comment)
 		sb.WriteString(formatTOMLValue(opt.Key, opt.Value))
 		sb.WriteString("\n\n")
 	}
@@ -226,7 +226,7 @@ func generateTOML(options []ConfigOption) string {
 func generateYAML(options []ConfigOption) string {
 	var sb strings.Builder
 	for _, opt := range options {
-		_, _ = fmt.Fprintf(&sb, "# %s\n", opt.Comment)
+		fmt.Fprintf(&sb, "# %s\n", opt.Comment)
 		sb.WriteString(formatYAMLValue(opt.Key, opt.Value))
 		sb.WriteString("\n")
 	}
@@ -261,7 +261,7 @@ func generateINI(options []ConfigOption) string {
 	var sb strings.Builder
 	sb.WriteString("[default]\n")
 	for _, opt := range options {
-		_, _ = fmt.Fprintf(&sb, "; %s\n", opt.Comment)
+		fmt.Fprintf(&sb, "; %s\n", opt.Comment)
 		sb.WriteString(formatINIValue(opt.Key, opt.Value))
 		sb.WriteString("\n")
 	}

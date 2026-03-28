@@ -1,18 +1,21 @@
 package ui
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"math/rand"
+	"net"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/go-zeromq/zmq4"
 	"github.com/iMithrellas/tarragon/internal/plugins"
 	"github.com/iMithrellas/tarragon/internal/wire"
 )
@@ -190,9 +193,9 @@ func (m *benchModel) View() string {
 	}
 
 	if m.done {
-		_, _ = fmt.Fprintf(&b, "Benchmark complete (%d/%d). Press q to quit.\n", doneCount, m.total)
+		fmt.Fprintf(&b, "Benchmark complete (%d/%d). Press q to quit.\n", doneCount, m.total)
 	} else {
-		_, _ = fmt.Fprintf(&b, "Benchmark running (%d/%d). Press q to quit.\n", doneCount, m.total)
+		fmt.Fprintf(&b, "Benchmark running (%d/%d). Press q to quit.\n", doneCount, m.total)
 	}
 	if m.fatalErr != "" {
 		b.WriteString("Error: " + m.fatalErr + "\n")
@@ -204,7 +207,7 @@ func (m *benchModel) View() string {
 		if st := m.stats[name]; st != nil {
 			worstLines := worstInputs(st, m.worstPct)
 			if len(worstLines) > 0 {
-				_, _ = fmt.Fprintf(&b, "Worst p%.0f inputs:\n", m.worstPct)
+				fmt.Fprintf(&b, "Worst p%.0f inputs:\n", m.worstPct)
 				for _, line := range worstLines {
 					b.WriteString("  " + line + "\n")
 				}
@@ -241,38 +244,14 @@ func (m *benchModel) refreshRows() {
 func runBench(ctx context.Context, mgr *plugins.Manager, opts BenchOptions, out chan<- benchMsg) {
 	defer func() { out <- benchMsg{done: true} }()
 
-	req := zmq4.NewReq(ctx)
-	if err := req.Dial(wire.EndpointUIReq); err != nil {
+	conn, err := net.Dial("unix", wire.SocketUI)
+	if err != nil {
 		out <- benchMsg{err: err}
 		return
 	}
-	defer func() { _ = req.Close() }()
-
-	sub := zmq4.NewSub(ctx, zmq4.WithTimeout(25*time.Millisecond))
-	if err := sub.Dial(wire.EndpointUISub); err != nil {
-		out <- benchMsg{err: err}
-		return
-	}
-	if err := sub.SetOption(zmq4.OptionSubscribe, ""); err != nil {
-		out <- benchMsg{err: err}
-		return
-	}
-	defer func() { _ = sub.Close() }()
-
-	msgCh := make(chan zmq4.Msg, 256)
-	go func() {
-		defer close(msgCh)
-		for {
-			if ctx.Err() != nil {
-				return
-			}
-			msg, err := sub.Recv()
-			if err != nil {
-				continue
-			}
-			msgCh <- msg
-		}
-	}()
+	defer func() { _ = conn.Close() }()
+	scanner := wire.NewScanner(conn)
+	var writeMu sync.Mutex
 
 	inputs := benchInputs(opts)
 
@@ -297,8 +276,11 @@ func runBench(ctx context.Context, mgr *plugins.Manager, opts BenchOptions, out 
 
 	for _, input := range inputs {
 		for i := 0; i < opts.Iterations; i++ {
+			if ctx.Err() != nil {
+				return
+			}
 			if len(general) > 0 {
-				results, missing, err := runQueryAll(req, msgCh, input, general, opts.Timeout)
+				results, missing, err := runQueryAll(conn, scanner, &writeMu, input, general, opts.Timeout)
 				if err != nil {
 					out <- benchMsg{err: err}
 					return
@@ -314,7 +296,7 @@ func runBench(ctx context.Context, mgr *plugins.Manager, opts BenchOptions, out 
 				p := mgr.Plugins[name]
 				prefix := strings.TrimSpace(p.Config.Prefix)
 				query := prefix + " " + input
-				results, missing, err := runQueryAll(req, msgCh, query, []string{name}, opts.Timeout)
+				results, missing, err := runQueryAll(conn, scanner, &writeMu, query, []string{name}, opts.Timeout)
 				if err != nil {
 					out <- benchMsg{err: err}
 					return
@@ -330,7 +312,7 @@ func runBench(ctx context.Context, mgr *plugins.Manager, opts BenchOptions, out 
 	}
 }
 
-func runQueryAll(req zmq4.Socket, msgCh <-chan zmq4.Msg, text string, targets []string, timeout time.Duration) (map[string]float64, []string, error) {
+func runQueryAll(conn net.Conn, scanner *bufio.Scanner, writeMu *sync.Mutex, text string, targets []string, timeout time.Duration) (map[string]float64, []string, error) {
 	if len(targets) == 0 {
 		return nil, nil, nil
 	}
@@ -339,39 +321,53 @@ func runQueryAll(req zmq4.Socket, msgCh <-chan zmq4.Msg, text string, targets []
 		expect[name] = struct{}{}
 	}
 
-	body, _ := json.Marshal(&wire.UIRequest{Type: "query", ClientID: "bench", Text: text})
-	if err := req.Send(zmq4.NewMsg(body)); err != nil {
+	writeMu.Lock()
+	err := wire.WriteMsg(conn, &wire.UIRequest{Type: "query", ClientID: "bench", Text: text})
+	writeMu.Unlock()
+	if err != nil {
 		return nil, nil, err
-	}
-	ackMsg, err := req.Recv()
-	if err != nil || len(ackMsg.Frames) == 0 {
-		return nil, nil, err
-	}
-	var ack wire.AckMessage
-	if json.Unmarshal(ackMsg.Frames[0], &ack) != nil || ack.QueryID == "" {
-		return nil, nil, fmt.Errorf("invalid ack")
 	}
 
 	received := make(map[string]float64)
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
+	deadline := time.Now().Add(timeout)
+	var qid string
 
 	for len(received) < len(expect) {
-		select {
-		case <-timer.C:
-			goto done
-		case msg, ok := <-msgCh:
-			if !ok {
+		if err := conn.SetReadDeadline(deadline); err != nil {
+			return received, nil, err
+		}
+		var raw json.RawMessage
+		if err := wire.ReadMsg(scanner, &raw); err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				break
+			}
+			if err == io.EOF {
 				return received, nil, fmt.Errorf("bench updates closed")
 			}
-			if len(msg.Frames) < 2 {
+			return received, nil, err
+		}
+		var kind struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(raw, &kind) != nil {
+			continue
+		}
+		switch kind.Type {
+		case "ack":
+			if qid != "" {
 				continue
 			}
-			if string(msg.Frames[0]) != ack.QueryID {
+			var ack wire.AckMessage
+			if json.Unmarshal(raw, &ack) != nil || ack.QueryID == "" {
 				continue
 			}
+			qid = ack.QueryID
+		case "update":
 			var upd wire.UpdateMessage
-			if json.Unmarshal(msg.Frames[1], &upd) != nil {
+			if json.Unmarshal(raw, &upd) != nil || upd.QueryID == "" {
+				continue
+			}
+			if qid == "" || upd.QueryID != qid {
 				continue
 			}
 			var view aggView
@@ -389,7 +385,7 @@ func runQueryAll(req zmq4.Socket, msgCh <-chan zmq4.Msg, text string, targets []
 			}
 		}
 	}
-done:
+	_ = conn.SetReadDeadline(time.Time{})
 	var missing []string
 	for name := range expect {
 		if _, ok := received[name]; !ok {
