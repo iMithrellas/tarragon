@@ -120,7 +120,7 @@ func TestUIServer_SelectAndDetachAck(t *testing.T) {
 	defer func() { _ = conn.Close() }()
 
 	scanner := wire.NewScanner(conn)
-	if err := wire.WriteMsg(conn, &wire.UIRequest{Type: "select", ClientID: "cli-test", QueryID: "q-1", Plugin: "plug_connected", Text: "id-123"}); err != nil {
+	if err := wire.WriteMsg(conn, &wire.UIRequest{Type: "select", ClientID: "cli-test", QueryID: "q-1", Plugin: "plug_connected", ResultID: "id-123", Action: "open"}); err != nil {
 		t.Fatalf("write select: %v", err)
 	}
 	var okMsg map[string]any
@@ -136,8 +136,22 @@ func TestUIServer_SelectAndDetachAck(t *testing.T) {
 		if msg.name != "plug_connected" || msg.queryID != "q-1" || msg.msgType != wire.MsgSelect {
 			t.Fatalf("unexpected forwarded select: %+v", msg)
 		}
+		if msg.resultID != "id-123" || msg.action != "open" {
+			t.Fatalf("unexpected forwarded select payload: %+v", msg)
+		}
 	case <-time.After(time.Second):
 		t.Fatalf("expected select forwarded")
+	}
+
+	if err := wire.WriteMsg(conn, &wire.UIRequest{Type: "select", ClientID: "cli-test", QueryID: "q-1", Plugin: "plug_missing", ResultID: "id-123", Action: "open"}); err != nil {
+		t.Fatalf("write select missing plugin: %v", err)
+	}
+	var selResp wire.SelectResponse
+	if err := wire.ReadMsg(scanner, &selResp); err != nil {
+		t.Fatalf("read select error response: %v", err)
+	}
+	if selResp.Type != wire.MsgSelectResponse || selResp.Success {
+		t.Fatalf("unexpected select error response: %+v", selResp)
 	}
 
 	if err := wire.WriteMsg(conn, &wire.UIRequest{Type: "detach", ClientID: "cli-test"}); err != nil {

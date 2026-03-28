@@ -3,6 +3,7 @@ package daemon
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"log"
 	"net"
 	"sort"
@@ -77,10 +78,12 @@ func (r *pluginRegistry) getConn(name string) (net.Conn, bool) {
 
 // Requests routed to plugins.
 type pluginRequest struct {
-	name    string
-	queryID string
-	text    string
-	msgType string
+	name     string
+	queryID  string
+	text     string
+	resultID string
+	action   string
+	msgType  string
 }
 
 func startPluginListener(ctx context.Context, store *aggregateStore, ui *uiRegistry) (chan<- pluginRequest, *pluginRegistry) {
@@ -156,7 +159,17 @@ func startPluginListener(ctx context.Context, store *aggregateStore, ui *uiRegis
 					msgType = wire.MsgRequest
 				}
 				_ = conn.SetWriteDeadline(time.Now().Add(100 * time.Millisecond))
-				err := wire.WriteMsg(conn, &wire.PluginRequest{Type: msgType, QueryID: req.queryID, Text: req.text})
+				var err error
+				if msgType == wire.MsgSelect {
+					err = wire.WriteMsg(conn, &wire.SelectRequest{
+						Type:     wire.MsgSelect,
+						QueryID:  req.queryID,
+						ResultID: req.resultID,
+						Action:   req.action,
+					})
+				} else {
+					err = wire.WriteMsg(conn, &wire.PluginRequest{Type: msgType, QueryID: req.queryID, Text: req.text})
+				}
 				_ = conn.SetWriteDeadline(time.Time{})
 				if err != nil {
 					log.Printf("[PLUGINS] send to %s failed: %v", req.name, err)
@@ -200,16 +213,41 @@ func handlePluginConn(ctx context.Context, conn net.Conn, registry *pluginRegist
 		default:
 		}
 
-		var resp wire.PluginResponse
-		if err := wire.ReadMsg(scanner, &resp); err != nil {
+		var raw map[string]json.RawMessage
+		if err := wire.ReadMsg(scanner, &raw); err != nil {
 			return
 		}
-		if resp.Type != wire.MsgResponse || resp.QueryID == "" {
-			continue
+
+		var msgType string
+		if b, ok := raw["type"]; ok {
+			_ = json.Unmarshal(b, &msgType)
 		}
-		snap, ok := store.update(resp.QueryID, hello.Name, elapsedMs(resp.QueryID, hello.Name), resp.Data)
-		if ok {
-			ui.publish(&wire.UpdateMessage{Type: "update", QueryID: resp.QueryID, Payload: snap})
+
+		switch msgType {
+		case wire.MsgResponse:
+			var resp wire.PluginResponse
+			b, err := json.Marshal(raw)
+			if err != nil || json.Unmarshal(b, &resp) != nil {
+				continue
+			}
+			if resp.QueryID == "" {
+				continue
+			}
+			snap, ok := store.update(resp.QueryID, hello.Name, elapsedMs(resp.QueryID, hello.Name), resp.Data)
+			if ok {
+				ui.publish(&wire.UpdateMessage{Type: "update", QueryID: resp.QueryID, Payload: snap})
+			}
+
+		case wire.MsgSelectResponse:
+			var resp wire.SelectResponse
+			b, err := json.Marshal(raw)
+			if err != nil || json.Unmarshal(b, &resp) != nil {
+				continue
+			}
+			if resp.Type == "" {
+				resp.Type = wire.MsgSelectResponse
+			}
+			ui.publish(&resp)
 		}
 	}
 }

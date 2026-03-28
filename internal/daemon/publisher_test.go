@@ -30,6 +30,28 @@ func TestUIRegistryPublish(t *testing.T) {
 	}
 }
 
+func TestUIRegistryPublishSelectResponse(t *testing.T) {
+	c1, c2 := net.Pipe()
+	defer func() { _ = c2.Close() }()
+
+	r := newUIRegistry()
+	r.add(&uiClient{conn: c1, scanner: wire.NewScanner(c1), clientID: "u1"})
+
+	done := make(chan *wire.SelectResponse, 1)
+	go func() {
+		s := wire.NewScanner(bufio.NewReader(c2))
+		var resp wire.SelectResponse
+		_ = wire.ReadMsg(s, &resp)
+		done <- &resp
+	}()
+
+	r.publish(&wire.SelectResponse{Type: wire.MsgSelectResponse, Success: true, Message: "ok"})
+	resp := <-done
+	if resp.Type != wire.MsgSelectResponse || !resp.Success || resp.Message != "ok" {
+		t.Fatalf("unexpected select response: %+v", resp)
+	}
+}
+
 func TestPublishToUINilRegistry(t *testing.T) {
 	publishToUI(nil, "q1", []byte(`{}`))
 }

@@ -65,7 +65,7 @@ func (r *uiRegistry) remove(id string) {
 	}
 }
 
-func (r *uiRegistry) publish(msg *wire.UpdateMessage) {
+func (r *uiRegistry) publish(msg any) {
 	r.mu.RLock()
 	clients := make([]*uiClient, 0, len(r.clients))
 	ids := make([]string, 0, len(r.clients))
@@ -145,9 +145,28 @@ func handleUIClient(ctx context.Context, conn net.Conn, mgr *plugins.Manager, re
 			_ = wire.WriteMsg(conn, map[string]any{"type": "ok"})
 			continue
 		case "select":
-			if parsed.Plugin != "" && parsed.QueryID != "" && pluginsReg.isConnected(parsed.Plugin) {
-				reqOut <- pluginRequest{name: parsed.Plugin, queryID: parsed.QueryID, text: parsed.Text, msgType: wire.MsgSelect}
+			pluginName := parsed.Plugin
+			resultID := parsed.ResultID
+			if resultID == "" {
+				// Backward compatibility with older UI payloads.
+				resultID = parsed.Text
 			}
+			action := parsed.Action
+			if action == "" {
+				action = "execute"
+			}
+
+			if pluginName == "" || parsed.QueryID == "" || resultID == "" {
+				_ = wire.WriteMsg(conn, &wire.SelectResponse{Type: wire.MsgSelectResponse, Success: false, Message: "missing plugin/query_id/result_id in select request"})
+				continue
+			}
+
+			if !pluginsReg.isConnected(pluginName) {
+				_ = wire.WriteMsg(conn, &wire.SelectResponse{Type: wire.MsgSelectResponse, Success: false, Message: "plugin not connected: " + pluginName})
+				continue
+			}
+
+			reqOut <- pluginRequest{name: pluginName, queryID: parsed.QueryID, resultID: resultID, action: action, msgType: wire.MsgSelect}
 			_ = wire.WriteMsg(conn, map[string]any{"type": "ok"})
 			continue
 		case "status":
