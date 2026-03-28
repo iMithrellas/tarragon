@@ -49,6 +49,15 @@ type statusMsg struct {
 }
 type statusTickMsg struct{}
 
+// selectResponseMsg carries the daemon's response to a select action.
+type selectResponseMsg struct {
+	success bool
+	message string
+}
+
+// clearSelectStatusMsg is sent after the auto-clear timer fires.
+type clearSelectStatusMsg struct{}
+
 // ─── Data types ──────────────────────────────────────────────────────────────
 
 // tuiAggResult extends the bench-only aggResult with the full plugin data payload.
@@ -173,6 +182,10 @@ type Model struct {
 	spinner spinner.Model
 	detail  viewport.Model
 
+	// transient action feedback (cleared after 3s)
+	selectStatus  string // empty means no message
+	selectSuccess bool   // true = success, false = error
+
 	// plugin status
 	pluginNames []string // connected plugin names
 	pluginTotal int      // total enabled plugins
@@ -259,6 +272,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case statusTickMsg:
 		m.doSendStatus()
 		cmds = append(cmds, tea.Tick(5*time.Second, func(_ time.Time) tea.Msg { return statusTickMsg{} }))
+
+	// ── Select action feedback ──────────────────────────────────────────────
+	case selectResponseMsg:
+		if msg.message != "" {
+			m.selectStatus = msg.message
+		} else if msg.success {
+			m.selectStatus = "✓ Action executed"
+		} else {
+			m.selectStatus = "✗ Action failed"
+		}
+		m.selectSuccess = msg.success
+		// Auto-clear after 3 seconds
+		cmds = append(cmds, tea.Tick(3*time.Second, func(_ time.Time) tea.Msg {
+			return clearSelectStatusMsg{}
+		}))
+
+	case clearSelectStatusMsg:
+		m.selectStatus = ""
 
 	// ── Debounce tick ──────────────────────────────────────────────────────
 	case debounceTickMsg:
@@ -441,6 +472,18 @@ func (m Model) View() string {
 	statusParts = append(statusParts, "q quit")
 	status := styleStatusBar.Render(strings.Join(statusParts, " • "))
 
+	// Action feedback overlay (shown above the status bar when non-empty)
+	if m.selectStatus != "" {
+		var feedbackStyle lipgloss.Style
+		if m.selectSuccess {
+			feedbackStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("82")).Bold(true) // green
+		} else {
+			feedbackStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true) // red
+		}
+		feedback := feedbackStyle.Render(m.selectStatus)
+		status = feedback + "  " + status
+	}
+
 	// ── Panels ──────────────────────────────────────────────────────────────
 	// Available height for panels (subtract header + status bar + 2 border lines each)
 	panelH := m.height - 4 // header(1) + status(1) + top-border(1) + bot-border(1)
@@ -519,21 +562,29 @@ func (m Model) renderList(height int) string {
 		col := pluginColor(row.Plugin)
 		dot := lipgloss.NewStyle().Foreground(col).Render("●")
 
+		// Frecency indicator: show a flame icon for items with notable frecency
+		frecIndicator := ""
+		if row.FrecencyScore > 1.0 {
+			frecIndicator = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render("🔥")
+		}
+
 		if i == m.cursor {
 			lines = append(lines, styleSelectedRow.Width(innerW).Render(
-				fmt.Sprintf(" → %s %-*s  %s",
+				fmt.Sprintf(" → %s %-*s  %s %s",
 					dot,
 					innerW/2,
 					truncate(label, innerW/2),
 					truncate(row.Plugin, innerW/5),
+					frecIndicator,
 				),
 			))
 		} else {
-			lines = append(lines, fmt.Sprintf("   %s %-*s  %s  %s",
+			lines = append(lines, fmt.Sprintf("   %s %-*s  %s %s %s",
 				dot,
 				innerW/2,
 				truncate(label, innerW/2),
 				truncate(row.Plugin, innerW/5),
+				frecIndicator,
 				latency,
 			))
 		}
@@ -610,13 +661,14 @@ func (m *Model) resizeViewport() {
 }
 
 // updateDetailContent pretty-prints the selected result's JSON into the viewport.
+// It also prepends a summary line with score / frecency metadata.
 func (m *Model) updateDetailContent() {
 	if len(m.rows) == 0 || m.cursor >= len(m.rows) {
 		m.detail.SetContent("(no selection)")
 		return
 	}
-	plugin := m.rows[m.cursor].Plugin
-	res, ok := m.results[plugin]
+	row := m.rows[m.cursor]
+	res, ok := m.results[row.Plugin]
 	if !ok {
 		m.detail.SetContent("(no data)")
 		return
@@ -626,8 +678,32 @@ func (m *Model) updateDetailContent() {
 		m.detail.SetContent(fmt.Sprintf("(marshal error: %v)", err))
 		return
 	}
+
+	// Build a metadata header above the raw JSON
+	var header strings.Builder
+	scoreStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Italic(true)
+	header.WriteString(scoreStyle.Render(fmt.Sprintf("Plugin: %s", row.Plugin)))
+	if row.Score > 0 {
+		header.WriteString(scoreStyle.Render(fmt.Sprintf("  Score: %.4f", row.Score)))
+	}
+	if row.FrecencyScore > 0 {
+		frecStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
+		header.WriteString("  " + frecStyle.Render(fmt.Sprintf("Frecency: %.2f", row.FrecencyScore)))
+	}
+	if len(row.Actions) > 0 {
+		names := make([]string, 0, len(row.Actions))
+		for _, a := range row.Actions {
+			n := a.Name
+			if a.Default {
+				n = "[" + n + "]"
+			}
+			names = append(names, n)
+		}
+		header.WriteString(scoreStyle.Render("  Actions: " + strings.Join(names, ", ")))
+	}
+
 	m.detail.GotoTop()
-	m.detail.SetContent(string(b))
+	m.detail.SetContent(header.String() + "\n\n" + string(b))
 }
 
 // inputInsert inserts a rune at the current cursor position.
@@ -669,17 +745,33 @@ func (m *Model) doSendQuery(text string) tea.Cmd {
 }
 
 // doSendSelect sends a select message for the currently highlighted row.
+// It picks the action marked Default=true, or "execute" as a fallback.
 func (m *Model) doSendSelect() {
 	if m.cs == nil || len(m.rows) == 0 || m.cursor >= len(m.rows) {
 		return
 	}
 	row := m.rows[m.cursor]
+
+	// Determine the action to send
+	action := "execute"
+	for _, a := range row.Actions {
+		if a.Default {
+			action = a.Name
+			break
+		}
+	}
+	// If there's exactly one action and no explicit default, use it
+	if action == "execute" && len(row.Actions) == 1 {
+		action = row.Actions[0].Name
+	}
+
 	_ = m.cs.writeMsg(&wire.UIRequest{
-		Type:     "select",
+		Type:     wire.MsgSelect,
 		ClientID: m.clientID,
 		QueryID:  m.lastQID,
 		Plugin:   row.Plugin,
-		Text:     row.ID,
+		ResultID: row.ID,
+		Action:   action,
 	})
 }
 
@@ -740,6 +832,16 @@ func (m Model) startReaderCmd() tea.Cmd {
 						total:     status.Total,
 					})
 
+				case wire.MsgSelectResponse:
+					var resp wire.SelectResponse
+					if json.Unmarshal(raw, &resp) != nil {
+						continue
+					}
+					cs.program.Send(selectResponseMsg{
+						success: resp.Success,
+						message: resp.Message,
+					})
+
 				case "update":
 					var upd wire.UpdateMessage
 					if json.Unmarshal(raw, &upd) != nil {
@@ -764,10 +866,12 @@ func (m Model) startReaderCmd() tea.Cmd {
 							continue
 						}
 						rows = append(rows, wire.ResultItem{
-							ID:     id,
-							Label:  label,
-							Plugin: it.Plugin,
-							Score:  it.Score,
+							ID:            id,
+							Label:         label,
+							Plugin:        it.Plugin,
+							Score:         it.Score,
+							FrecencyScore: it.FrecencyScore,
+							Actions:       it.Actions,
 						})
 					}
 					cs.program.Send(updateMsg{
