@@ -7,8 +7,10 @@ import json
 import logging
 import os
 from pathlib import Path
+import shlex
 import signal
 import socket as sock_mod
+import subprocess
 import sys
 import threading
 import time
@@ -169,6 +171,13 @@ def process(text: str, cache: DesktopEntryCache) -> list[dict]:
                 "id": entry.get("exec", ""),
                 "label": label,
                 "score": score,
+                "actions": [
+                    {
+                        "name": "open",
+                        "default": True,
+                        "description": "Launch application",
+                    }
+                ],
             }
         )
 
@@ -253,8 +262,32 @@ def run_daemon() -> int:
             s.sendall(json.dumps(resp).encode() + b"\n")
             logger.info("response sent qid=%s", qid)
         elif typ == "select":
-            token = msg.get("text", "")
-            logger.info("selection qid=%s token=%s", qid, token)
+            result_id = msg.get("result_id", "")
+            action = msg.get("action", "")
+            logger.info("select qid=%s result_id=%s action=%s", qid, result_id, action)
+            try:
+                if action and action != "open":
+                    raise ValueError(f"unsupported action: {action}")
+                cmd = shlex.split(result_id)
+                desktop_tokens = {"%u", "%U", "%f", "%F", "%d", "%D", "%n", "%N", "%i", "%c", "%k"}
+                cmd = [part for part in cmd if part not in desktop_tokens]
+                if not cmd:
+                    raise ValueError("empty command")
+                subprocess.Popen(
+                    cmd,
+                    start_new_session=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                success, message = True, f"Launched {cmd[0]}"
+            except Exception as err:
+                success, message = False, str(err)
+            resp = {
+                "type": "select_response",
+                "success": success,
+                "message": message,
+            }
+            s.sendall(json.dumps(resp).encode() + b"\n")
 
     stop_event.set()
     logger.info("exiting")

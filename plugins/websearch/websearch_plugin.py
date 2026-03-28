@@ -10,6 +10,7 @@ import logging
 import os
 import signal
 import socket as sock_mod
+import subprocess
 import sys
 from urllib.parse import quote_plus
 
@@ -57,6 +58,13 @@ def process(text: str):
             "id": url,
             "label": f"{name}: {clean_query}",
             "score": 1.0,
+            "actions": [
+                {
+                    "name": "open",
+                    "default": True,
+                    "description": "Open in browser",
+                }
+            ],
         }
     ]
 
@@ -118,8 +126,29 @@ def run_daemon():
             s.sendall(json.dumps(resp).encode() + b"\n")
             logger.info("response sent qid=%s", qid)
         elif typ == "select":
-            token = msg.get("text", "")
-            logger.info("selection qid=%s token=%s", qid, token)
+            result_id = msg.get("result_id", "")
+            action = msg.get("action", "")
+            logger.info("select qid=%s result_id=%s action=%s", qid, result_id, action)
+            try:
+                if action and action != "open":
+                    raise ValueError(f"unsupported action: {action}")
+                if result_id == "websearch-hint" or not result_id:
+                    raise ValueError("no URL to open")
+                subprocess.Popen(
+                    ["xdg-open", result_id],
+                    start_new_session=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                success, message = True, "Opened in browser"
+            except Exception as err:
+                success, message = False, str(err)
+            resp = {
+                "type": "select_response",
+                "success": success,
+                "message": message,
+            }
+            s.sendall(json.dumps(resp).encode() + b"\n")
 
     logger.info("exiting")
     return 0

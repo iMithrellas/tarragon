@@ -12,6 +12,7 @@ import os
 import re
 import socket as sock_mod
 import signal
+import subprocess
 import sys
 import ast
 
@@ -130,8 +131,34 @@ def process(text: str):
         {
             "id": out,
             "label": f"{text.strip()} = {out}",
+            "actions": [
+                {
+                    "name": "copy",
+                    "default": True,
+                    "description": "Copy to clipboard",
+                }
+            ],
         }
     ]
+
+
+def _copy_to_clipboard(text: str) -> tuple[bool, str]:
+    try:
+        subprocess.run(["wl-copy", text], check=True, timeout=5)
+        return True, "Copied to clipboard"
+    except FileNotFoundError:
+        try:
+            subprocess.run(
+                ["xclip", "-selection", "clipboard"],
+                input=text.encode(),
+                check=True,
+                timeout=5,
+            )
+            return True, "Copied to clipboard"
+        except Exception as err:
+            return False, str(err)
+    except Exception as err:
+        return False, str(err)
 
 
 def run_daemon():
@@ -190,8 +217,21 @@ def run_daemon():
             s.sendall(json.dumps(resp).encode() + b"\n")
             logger.info("response sent qid=%s", qid)
         elif typ == "select":
-            token = msg.get("text", "")
-            logger.info("selection qid=%s token=%s", qid, token)
+            result_id = msg.get("result_id", "")
+            action = msg.get("action", "")
+            logger.info("select qid=%s result_id=%s action=%s", qid, result_id, action)
+            try:
+                if action and action != "copy":
+                    raise ValueError(f"unsupported action: {action}")
+                success, message = _copy_to_clipboard(result_id)
+            except Exception as err:
+                success, message = False, str(err)
+            resp = {
+                "type": "select_response",
+                "success": success,
+                "message": message,
+            }
+            s.sendall(json.dumps(resp).encode() + b"\n")
 
     logger.info("exiting")
     return 0
