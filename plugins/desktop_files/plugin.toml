@@ -1,0 +1,11 @@
+name = "desktop_files"
+description = "Application launcher from .desktop files"
+enabled = true
+entrypoint = "desktop_files_plugin.py"
+lifecycle_mode = "on_demand_persistent"
+
+provides_general_suggestions = true
+prefix = ""
+require_prefix = false
+build_dependencies = ["python3"]
+capabilities = ["suggest"]
