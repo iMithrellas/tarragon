@@ -32,3 +32,6 @@ build
 
 # Rust build outputs in template plugin
 plugins/template_rust/target/
+
+# Go plugin build outputs
+plugins/file_finder/file_finder
