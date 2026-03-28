@@ -7,7 +7,7 @@ A highly extensible automation and interaction framework with a language-agnosti
 ## Core Purpose
 
 - **Primary**: Provide a fast, lightweight core that aggregates and routes requests/responses between plugins and frontends (CLI, TUI, GUI, or custom).
-- **Secondary**: Enable easy plugin development in any language through a well-defined protocol (e.g., ZeroMQ), supporting rich use-cases like:
+- **Secondary**: Enable easy plugin development in any language through a well-defined IPC protocol (Unix Domain Sockets + NDJSON), supporting rich use-cases like:
   - application launching (roots of the project)
   - calculations and unit conversions
   - web/API integrations
@@ -36,7 +36,7 @@ Plugins can be invoked directly or contextually, and can expose commands, values
 ### Plugin System
 - **Integrated Suggestions**: Seamlessly blends suggestions from installed applications and active plugins based on user input.
 - **Language Agnostic**: Plugins are external executables or scripts.
-- **Persistent Processes & IPC**: For responsiveness, plugins providing real-time suggestions typically run as persistent processes managed by the launcher daemon, communicating via efficient IPC (ZeroMQ) or potentially via TCP(Remote plugins/containerized plugins). This avoids per-keystroke lag.
+- **Persistent Processes & IPC**: For responsiveness, plugins providing real-time suggestions typically run as persistent processes managed by the launcher daemon, communicating via efficient IPC (Unix Domain Sockets + NDJSON) or potentially via TCP (remote/containerized plugins). This avoids per-keystroke lag.
 - **Plugin Lifecycle Modes**: Plugins declare their required lifecycle:
     - `daemon`: Runs persistently alongside the launcher daemon (e.g., clipboard manager).
     - `on_demand_persistent`: Started when the UI attaches or first needed; remains active while UI is shown (e.g., calculator, file search).
@@ -114,7 +114,7 @@ graph TD
 (Run when explicitly invoked)"]
         SearchEngines["Example: Search Engines
         (Youtube/Wiki)"]
-        Socket{"IPC/TCP ZeroMQ"}
+        Socket{"IPC/TCP (UDS + NDJSON)"}
   end
  subgraph Daemon["TarraGon Daemon"]
         Core["Core Engine"]
