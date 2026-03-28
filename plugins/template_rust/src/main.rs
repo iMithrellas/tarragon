@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::env;
 use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
+use std::process::Command;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -117,6 +118,32 @@ fn json_str(s: &str) -> String {
     )
 }
 
+fn copy_to_clipboard(text: &str) -> (bool, String) {
+    // Try wl-copy first (Wayland)
+    if let Ok(mut child) = Command::new("wl-copy").arg("--").arg(text).spawn() {
+        match child.wait() {
+            Ok(status) if status.success() => return (true, "Copied to clipboard".into()),
+            _ => {}
+        }
+    }
+    // Fallback to xclip (X11)
+    if let Ok(mut child) = Command::new("xclip")
+        .args(["-selection", "clipboard"])
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+    {
+        if let Some(mut stdin) = child.stdin.take() {
+            use std::io::Write;
+            let _ = stdin.write_all(text.as_bytes());
+        }
+        match child.wait() {
+            Ok(status) if status.success() => return (true, "Copied to clipboard".into()),
+            _ => {}
+        }
+    }
+    (false, "No clipboard tool found".into())
+}
+
 fn main() {
     log("initializing");
     let args: Vec<_> = env::args().skip(1).collect();
@@ -182,7 +209,7 @@ fn run_uds(name: &str, endpoint: &str) -> Result<(), String> {
 
     for line in reader.lines() {
         let line = line.map_err(|e| e.to_string())?;
-        let (typ, qid, text) = parse_json(&line);
+        let (typ, qid, text, result_id, action) = parse_json(&line);
 
         match typ.as_deref() {
             Some("request") => {
@@ -191,7 +218,7 @@ fn run_uds(name: &str, endpoint: &str) -> Result<(), String> {
                 let v = process(&text);
                 map.insert(qid.clone(), v.clone());
                 let resp = format!(
-                    "{{\"type\":\"response\",\"query_id\":{},\"data\":{{\"input\":{},\"variants\":[{{\"id\":\"1\",\"label\":{}}},{{\"id\":\"2\",\"label\":{}}},{{\"id\":\"3\",\"label\":{}}}]}}}}",
+                    "{{\"type\":\"response\",\"query_id\":{},\"data\":{{\"input\":{},\"variants\":[{{\"id\":\"1\",\"label\":{},\"actions\":[{{\"name\":\"copy\",\"default\":true,\"description\":\"Copy to clipboard\"}}]}},{{\"id\":\"2\",\"label\":{},\"actions\":[{{\"name\":\"copy\",\"default\":true,\"description\":\"Copy to clipboard\"}}]}},{{\"id\":\"3\",\"label\":{},\"actions\":[{{\"name\":\"copy\",\"default\":true,\"description\":\"Copy to clipboard\"}}]}}]}}}}",
                     json_str(&qid), json_str(&text), json_str(&v[0]), json_str(&v[1]), json_str(&v[2])
                 );
                 writeln!(writer, "{}", resp).map_err(|e| e.to_string())?;
@@ -199,17 +226,24 @@ fn run_uds(name: &str, endpoint: &str) -> Result<(), String> {
             }
             Some("select") => {
                 let qid = qid.unwrap_or_default();
-                let token = text.unwrap_or_default();
-                let val = token
+                let result_id = result_id.unwrap_or_default();
+                let _action = action.unwrap_or_default();
+                let (success, message) = match result_id
                     .parse::<usize>()
                     .ok()
                     .and_then(|i| map.get(&qid)?.get(i.wrapping_sub(1)))
                     .cloned()
-                    .unwrap_or_default();
-                log(&format!(
-                    "selection qid={} token={} val={}",
-                    qid, token, val
-                ));
+                {
+                    Some(val) => copy_to_clipboard(&val),
+                    None => (false, format!("Unknown result: {}", result_id)),
+                };
+                let resp = format!(
+                    "{{\"type\":\"select_response\",\"success\":{},\"message\":{}}}",
+                    success,
+                    json_str(&message)
+                );
+                writeln!(writer, "{}", resp).map_err(|e| e.to_string())?;
+                log(&format!("select_response qid={} success={}", qid, success));
             }
             _ => {}
         }
@@ -218,8 +252,16 @@ fn run_uds(name: &str, endpoint: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn parse_json(s: &str) -> (Option<String>, Option<String>, Option<String>) {
-    let (mut typ, mut qid, mut text) = (None, None, None);
+fn parse_json(
+    s: &str,
+) -> (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+) {
+    let (mut typ, mut qid, mut text, mut result_id, mut action) = (None, None, None, None, None);
     for part in s.trim_matches(|c| c == '{' || c == '}').split(',') {
         let mut kv = part.splitn(2, ':');
         let (k, v) = match (kv.next(), kv.next()) {
@@ -230,8 +272,10 @@ fn parse_json(s: &str) -> (Option<String>, Option<String>, Option<String>) {
             "type" => typ = Some(v.into()),
             "query_id" => qid = Some(v.into()),
             "text" => text = Some(v.into()),
+            "result_id" => result_id = Some(v.into()),
+            "action" => action = Some(v.into()),
             _ => {}
         }
     }
-    (typ, qid, text)
+    (typ, qid, text, result_id, action)
 }
