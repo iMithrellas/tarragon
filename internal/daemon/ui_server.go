@@ -196,6 +196,28 @@ func dispatchQuery(ctx context.Context, queryText, qid string, mgr *plugins.Mana
 		if hasTarget && name != targetName {
 			continue
 		}
+
+		if p.Config.Lifecycle == plugins.LifecycleOnDemandPersistent && !pluginsReg.isConnected(name) {
+			if err := mgr.StartOnDemand(ctx, name, wire.SocketPlugins); err != nil {
+				log.Printf("[UI] failed to start on-demand plugin %s: %v", name, err)
+				continue
+			}
+
+			connected := false
+			for i := 0; i < 40; i++ {
+				if pluginsReg.isConnected(name) {
+					connected = true
+					break
+				}
+				time.Sleep(50 * time.Millisecond)
+			}
+
+			if !connected {
+				log.Printf("[UI] on-demand plugin %s did not connect within 2s; skipping query %s", name, qid)
+				continue
+			}
+		}
+
 		if pluginsReg.isConnected(name) {
 			reqOut <- pluginRequest{name: name, queryID: qid, text: queryText}
 		}

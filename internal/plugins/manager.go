@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 
 	"github.com/pelletier/go-toml/v2"
 )
@@ -43,13 +45,14 @@ type Plugin struct {
 	Dir    string
 
 	cmd     *exec.Cmd
-	running bool
+	running atomic.Bool
 }
 
 // Manager oversees all plugins.
 type Manager struct {
 	Plugins   map[string]*Plugin
 	pluginDir string
+	mu        sync.Mutex
 }
 
 // DefaultDir returns the default plugin directory.
@@ -104,6 +107,9 @@ func (m *Manager) Discover() error {
 
 // StartPersistent starts all daemon lifecycle plugins.
 func (m *Manager) StartPersistent(ctx context.Context, ipcEndpoint string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	for name, p := range m.Plugins {
 		if !p.Config.Enabled {
 			continue
@@ -120,8 +126,47 @@ func (m *Manager) StartPersistent(ctx context.Context, ipcEndpoint string) error
 	return nil
 }
 
+// StartOnDemand starts a single on-demand persistent plugin if needed.
+func (m *Manager) StartOnDemand(ctx context.Context, name string, ipcEndpoint string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	p, ok := m.Plugins[name]
+	if !ok {
+		return nil
+	}
+	if !p.Config.Enabled || p.running.Load() {
+		return nil
+	}
+	if p.Config.Lifecycle != LifecycleOnDemandPersistent {
+		return nil
+	}
+
+	log.Printf("starting plugin %s (lifecycle=%s)", name, p.Config.Lifecycle)
+	if err := p.start(ctx, ipcEndpoint); err != nil {
+		return err
+	}
+	if p.cmd != nil && p.cmd.Process != nil {
+		log.Printf("started plugin %s (pid=%d)", name, p.cmd.Process.Pid)
+	}
+
+	return nil
+}
+
+// IsRunning reports whether the named plugin is running.
+func (m *Manager) IsRunning(name string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	p, ok := m.Plugins[name]
+	if !ok {
+		return false
+	}
+	return p.running.Load()
+}
+
 func (p *Plugin) start(ctx context.Context, ipcEndpoint string) error {
-	if p.running {
+	if p.running.Load() {
 		return nil
 	}
 	if p.Config.Entrypoint == "" {
@@ -140,7 +185,7 @@ func (p *Plugin) start(ctx context.Context, ipcEndpoint string) error {
 		return err
 	}
 	p.cmd = cmd
-	p.running = true
+	p.running.Store(true)
 
 	go func() {
 		err := cmd.Wait()
@@ -149,24 +194,27 @@ func (p *Plugin) start(ctx context.Context, ipcEndpoint string) error {
 		} else {
 			log.Printf("plugin %s exited", p.Config.Name)
 		}
-		p.running = false
+		p.running.Store(false)
 	}()
 	return nil
 }
 
 // StopAll stops all running plugin processes.
 func (m *Manager) StopAll() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	for _, p := range m.Plugins {
 		p.stop()
 	}
 }
 
 func (p *Plugin) stop() {
-	if !p.running || p.cmd == nil {
+	if !p.running.Load() || p.cmd == nil {
 		return
 	}
 	if err := p.cmd.Process.Kill(); err != nil {
 		log.Printf("error killing plugin %s: %v", p.Config.Name, err)
 	}
-	p.running = false
+	p.running.Store(false)
 }
