@@ -12,6 +12,7 @@ import (
 	"math"
 	"net"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"sort"
@@ -32,21 +33,36 @@ const (
 )
 
 type pluginMessage struct {
-	Type    string `json:"type"`
-	Name    string `json:"name,omitempty"`
-	QueryID string `json:"query_id,omitempty"`
-	Text    string `json:"text,omitempty"`
-	Data    any    `json:"data,omitempty"`
+	Type     string `json:"type"`
+	Name     string `json:"name,omitempty"`
+	QueryID  string `json:"query_id,omitempty"`
+	Text     string `json:"text,omitempty"`
+	ResultID string `json:"result_id,omitempty"`
+	Action   string `json:"action,omitempty"`
+	Data     any    `json:"data,omitempty"`
 }
 
 type responseData struct {
 	Results []resultItem `json:"results"`
 }
 
+type actionItem struct {
+	Name        string `json:"name"`
+	Default     bool   `json:"default,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
 type resultItem struct {
-	ID    string  `json:"id"`
-	Label string  `json:"label"`
-	Score float64 `json:"score"`
+	ID      string       `json:"id"`
+	Label   string       `json:"label"`
+	Score   float64      `json:"score"`
+	Actions []actionItem `json:"actions,omitempty"`
+}
+
+type selectResponse struct {
+	Type    string `json:"type"`
+	Success bool   `json:"success"`
+	Message string `json:"message,omitempty"`
 }
 
 type fileRow struct {
@@ -460,6 +476,10 @@ func (i *indexer) query(ctx context.Context, q string) ([]resultItem, error) {
 			ID:    h.Path,
 			Label: formatLabel(h.Path, h.Filename),
 			Score: scoreFilename(h.Filename, q),
+			Actions: []actionItem{
+				{Name: "open", Default: true, Description: "Open file"},
+				{Name: "open_folder", Description: "Open containing folder"},
+			},
 		})
 	}
 
@@ -575,7 +595,42 @@ func runDaemonMode(ctx context.Context, endpoint, pluginName string, idx *indexe
 				return fmt.Errorf("write response: %w", err)
 			}
 		case "select":
-			logInfo(pluginName, "received select for query_id=%s", msg.QueryID)
+			resultID := msg.ResultID
+			action := msg.Action
+			logInfo(pluginName, "select qid=%s result_id=%s action=%s", msg.QueryID, resultID, action)
+
+			var success bool
+			var message string
+			switch action {
+			case "open", "":
+				cmd := exec.Command("xdg-open", resultID)
+				cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+				cmd.Stdout = nil
+				cmd.Stderr = nil
+				if err := cmd.Start(); err != nil {
+					success, message = false, fmt.Sprintf("failed to open: %v", err)
+				} else {
+					success, message = true, fmt.Sprintf("Opened %s", filepath.Base(resultID))
+				}
+			case "open_folder":
+				dir := filepath.Dir(resultID)
+				cmd := exec.Command("xdg-open", dir)
+				cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+				cmd.Stdout = nil
+				cmd.Stderr = nil
+				if err := cmd.Start(); err != nil {
+					success, message = false, fmt.Sprintf("failed to open folder: %v", err)
+				} else {
+					success, message = true, fmt.Sprintf("Opened %s", dir)
+				}
+			default:
+				success, message = false, fmt.Sprintf("unknown action: %s", action)
+			}
+
+			resp := selectResponse{Type: "select_response", Success: success, Message: message}
+			if err := writeJSONLine(conn, resp); err != nil {
+				return fmt.Errorf("write select_response: %w", err)
+			}
 		default:
 			logInfo(pluginName, "ignoring message type=%s", msg.Type)
 		}
