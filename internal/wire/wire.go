@@ -3,19 +3,17 @@ package wire
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
 )
 
-// Endpoints used across daemon and UI
+// Unix socket paths used across daemon and clients.
 const (
 	SocketUI      = "/tmp/tarragon-ui.sock"
 	SocketPlugins = "/tmp/tarragon-plugins.sock"
-	// Compatibility aliases for parallel workstreams still using legacy names.
-	EndpointUIReq   = SocketUI
-	EndpointUISub   = SocketUI
-	EndpointPlugins = SocketPlugins
 )
 
 // Message type constants (for plugins)
@@ -79,44 +77,60 @@ type PluginResponse struct {
 	Data    json.RawMessage `json:"data"`
 }
 
-// WriteMsg marshals v as JSON and writes it followed by \n to w.
+const maxNDJSONLineSize = 1 << 20 // 1MB
+
+// WriteMsg marshals v as JSON and writes it as a single NDJSON line.
+//
+// If multiple goroutines share the same connection/writer, callers must
+// serialize access (for example with a connection-scoped sync.Mutex).
 func WriteMsg(w io.Writer, v any) error {
-	data, err := json.Marshal(v)
+	b, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}
-	data = append(data, '\n')
-	_, err = w.Write(data)
-	return err
-}
 
-// ReadMsg reads one JSON line from scanner and unmarshals into v.
-func ReadMsg(scanner *bufio.Scanner, v any) error {
-	if !scanner.Scan() {
-		if err := scanner.Err(); err != nil {
-			return err
-		}
-		return io.EOF
-	}
-	return json.Unmarshal(scanner.Bytes(), v)
-}
-
-// NewScanner creates a bufio.Scanner for NDJSON with 1MB max line size.
-func NewScanner(r io.Reader) *bufio.Scanner {
-	s := bufio.NewScanner(r)
-	s.Buffer(make([]byte, 0, 64*1024), 1<<20)
-	return s
-}
-
-// CleanupSocket removes a stale Unix socket path if present.
-func CleanupSocket(path string) error {
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+	if _, err := w.Write(append(b, '\n')); err != nil {
 		return err
 	}
 	return nil
 }
 
-// ListenUnix listens on a Unix domain socket after cleaning up any stale file.
+// ReadMsg reads one NDJSON line from scanner and unmarshals it into v.
+func ReadMsg(scanner *bufio.Scanner, v any) error {
+	if scanner.Scan() {
+		return json.Unmarshal(scanner.Bytes(), v)
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	return io.EOF
+}
+
+// NewScanner creates a scanner configured for NDJSON with 1MB max line size.
+func NewScanner(r io.Reader) *bufio.Scanner {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxNDJSONLineSize)
+	return scanner
+}
+
+// CleanupSocket removes a stale unix socket file if it exists.
+func CleanupSocket(path string) error {
+	fi, err := os.Stat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+
+	if fi.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("%s exists and is not a socket", path)
+	}
+
+	return os.Remove(path)
+}
+
+// ListenUnix creates a unix listener after cleaning up stale socket files.
 func ListenUnix(path string) (net.Listener, error) {
 	if err := CleanupSocket(path); err != nil {
 		return nil, err
