@@ -43,6 +43,11 @@ type updateMsg struct {
 }
 type errMsg struct{ err error }
 type debounceTickMsg struct{ seq int }
+type statusMsg struct {
+	connected []string
+	total     int
+}
+type statusTickMsg struct{}
 
 // ─── Data types ──────────────────────────────────────────────────────────────
 
@@ -168,6 +173,10 @@ type Model struct {
 	spinner spinner.Model
 	detail  viewport.Model
 
+	// plugin status
+	pluginNames []string // connected plugin names
+	pluginTotal int      // total enabled plugins
+
 	// dimensions
 	width  int
 	height int
@@ -192,9 +201,11 @@ func NewModel(clientID string, debounceMs int) Model {
 // ─── Tea interface ───────────────────────────────────────────────────────────
 
 func (m Model) Init() tea.Cmd {
+	m.doSendStatus()
 	return tea.Batch(
 		m.spinner.Tick,
 		m.startReaderCmd(),
+		tea.Tick(5*time.Second, func(_ time.Time) tea.Msg { return statusTickMsg{} }),
 	)
 }
 
@@ -239,6 +250,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case errMsg:
 		// connection error — quit gracefully
 		return m, tea.Quit
+
+	// ── Plugin status ──────────────────────────────────────────────────────
+	case statusMsg:
+		m.pluginNames = msg.connected
+		m.pluginTotal = msg.total
+
+	case statusTickMsg:
+		m.doSendStatus()
+		cmds = append(cmds, tea.Tick(5*time.Second, func(_ time.Time) tea.Msg { return statusTickMsg{} }))
 
 	// ── Debounce tick ──────────────────────────────────────────────────────
 	case debounceTickMsg:
@@ -396,6 +416,22 @@ func (m Model) View() string {
 
 	// ── Status bar ──────────────────────────────────────────────────────────
 	var statusParts []string
+
+	// Plugin status with colored dots
+	if m.pluginTotal > 0 {
+		pluginStatus := fmt.Sprintf("Plugins %d/%d", len(m.pluginNames), m.pluginTotal)
+		var dots []string
+		for _, name := range m.pluginNames {
+			col := pluginColor(name)
+			dot := lipgloss.NewStyle().Foreground(col).Render("●")
+			dots = append(dots, dot)
+		}
+		if len(dots) > 0 {
+			pluginStatus += " " + strings.Join(dots, "")
+		}
+		statusParts = append(statusParts, pluginStatus)
+	}
+
 	statusParts = append(statusParts, fmt.Sprintf("%d result(s)", len(m.rows)))
 	statusParts = append(statusParts, "↑↓ navigate")
 	if m.showDetail() {
@@ -655,6 +691,14 @@ func (m *Model) doSendDetach() {
 	_ = m.cs.writeMsg(&wire.UIRequest{Type: "detach", ClientID: m.clientID})
 }
 
+// doSendStatus sends a status request to the daemon.
+func (m *Model) doSendStatus() {
+	if m.cs == nil {
+		return
+	}
+	_ = m.cs.writeMsg(&wire.UIRequest{Type: "status", ClientID: m.clientID})
+}
+
 // startReaderCmd returns a tea.Cmd that spawns a goroutine to read messages
 // from the daemon socket and forward them to Tea via program.Send.
 func (m Model) startReaderCmd() tea.Cmd {
@@ -685,6 +729,16 @@ func (m Model) startReaderCmd() tea.Cmd {
 						continue
 					}
 					cs.program.Send(ackMsg{queryID: ack.QueryID})
+
+				case "status":
+					var status wire.StatusResponse
+					if json.Unmarshal(raw, &status) != nil {
+						continue
+					}
+					cs.program.Send(statusMsg{
+						connected: status.Connected,
+						total:     status.Total,
+					})
 
 				case "update":
 					var upd wire.UpdateMessage

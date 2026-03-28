@@ -150,6 +150,20 @@ func handleUIClient(ctx context.Context, conn net.Conn, mgr *plugins.Manager, re
 			}
 			_ = wire.WriteMsg(conn, map[string]any{"type": "ok"})
 			continue
+		case "status":
+			connected := pluginsReg.Names()
+			total := 0
+			for _, p := range mgr.Plugins {
+				if p.Config.Enabled {
+					total++
+				}
+			}
+			_ = wire.WriteMsg(conn, &wire.StatusResponse{
+				Type:      "status",
+				Connected: connected,
+				Total:     total,
+			})
+			continue
 		case "query", "":
 			// handled below
 		default:

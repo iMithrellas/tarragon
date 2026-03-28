@@ -5,6 +5,7 @@ import (
 	"context"
 	"log"
 	"net"
+	"sort"
 	"sync"
 	"time"
 
@@ -53,6 +54,18 @@ func (r *pluginRegistry) isConnected(name string) bool {
 	defer r.mu.RUnlock()
 	_, ok := r.conns[name]
 	return ok
+}
+
+// Names returns a sorted list of currently connected plugin names.
+func (r *pluginRegistry) Names() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	names := make([]string, 0, len(r.conns))
+	for name := range r.conns {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func (r *pluginRegistry) getConn(name string) (net.Conn, bool) {
