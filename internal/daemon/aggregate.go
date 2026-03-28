@@ -220,7 +220,8 @@ func parseObjectItem(plugin string, obj map[string]json.RawMessage) (wire.Result
 		id = label
 	}
 	score := readFloatField(obj, "score")
-	return wire.ResultItem{ID: id, Label: label, Plugin: plugin, Score: score}, true
+	actions := readActionsField(obj, "actions")
+	return wire.ResultItem{ID: id, Label: label, Plugin: plugin, Score: score, Actions: actions}, true
 }
 
 func readStringField(obj map[string]json.RawMessage, key string) string {
@@ -245,6 +246,18 @@ func readFloatField(obj map[string]json.RawMessage, key string) float64 {
 		return f
 	}
 	return 0
+}
+
+func readActionsField(obj map[string]json.RawMessage, key string) []wire.Action {
+	raw, ok := obj[key]
+	if !ok {
+		return nil
+	}
+	var actions []wire.Action
+	if json.Unmarshal(raw, &actions) == nil {
+		return actions
+	}
+	return nil
 }
 
 func toRawMap(m map[string]any) map[string]json.RawMessage {
