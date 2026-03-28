@@ -13,4 +13,3 @@ name = "template_rust"
 path = "src/main.rs"
 
 [dependencies]
-zmq = "0.10"

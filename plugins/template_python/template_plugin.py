@@ -10,13 +10,9 @@ import json
 import logging
 import os
 import random
+import socket as sock_mod
 import signal
 import sys
-
-try:
-    import zmq
-except ImportError:
-    zmq = None
 
 # Setup logging
 PLUGIN_NAME = os.environ.get("TARRAGON_PLUGIN_NAME", "template_python")
@@ -53,35 +49,34 @@ def process(text: str) -> list[str]:
 
 
 def run_daemon():
-    """Run as ZMQ daemon or idle mode."""
+    """Run as daemon over Unix socket or idle mode."""
     logger.info("initializing")
     endpoint = os.environ.get("TARRAGON_PLUGINS_ENDPOINT")
 
-    if not endpoint or not zmq:
-        if endpoint:
-            logger.error("pyzmq not available; install with 'pip install pyzmq'")
+    if not endpoint:
         logger.info("started successfully; idle mode")
         signal.pause()
         return 0
 
-    # ZMQ setup
-    ctx = zmq.Context.instance()
-    sock = ctx.socket(zmq.DEALER)
-    sock.setsockopt(zmq.IDENTITY, PLUGIN_NAME.encode())
-    sock.connect(endpoint)
-    sock.send(json.dumps({"type": "hello", "name": PLUGIN_NAME}).encode())
+    s = sock_mod.socket(sock_mod.AF_UNIX, sock_mod.SOCK_STREAM)
+    s.connect(endpoint)
+    s.sendall(json.dumps({"type": "hello", "name": PLUGIN_NAME}).encode() + b"\n")
     logger.info("connected to %s", endpoint)
 
     # Track selections
     variants_map = {}
 
+    f = s.makefile("r")
     stop = False
     signal.signal(signal.SIGTERM, lambda *_: globals().update(stop=True))
     signal.signal(signal.SIGINT, lambda *_: globals().update(stop=True))
 
     while not stop:
         try:
-            msg = json.loads(sock.recv().decode())
+            line = f.readline()
+            if not line:
+                break
+            msg = json.loads(line)
         except Exception as e:
             logger.error("recv error: %s", e)
             break
@@ -109,7 +104,7 @@ def run_daemon():
             except Exception as e:
                 resp = {"type": "response", "query_id": qid, "data": {"error": str(e)}}
 
-            sock.send(json.dumps(resp).encode())
+            s.sendall(json.dumps(resp).encode() + b"\n")
             logger.info("response sent qid=%s", qid)
 
         elif typ == "select":

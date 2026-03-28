@@ -7,7 +7,7 @@ INSTALL_ROOT := $(HOME)/.local/lib/tarragon/plugins/$(PLUGIN_NAME)
 
 check-deps:
 	@command -v python3 >/dev/null 2>&1 || { echo "python3 not found" >&2; exit 1; }
-	@python3 -c 'import sys, importlib; print("python", sys.version.split()[0]); importlib.import_module("zmq") or None' || { echo "pyzmq not installed. Try: pip install --user pyzmq" >&2; exit 1; }
+	@python3 -c 'import sys; print("python", sys.version.split()[0])' || { echo "python3 check failed" >&2; exit 1; }
 	@echo "Dependencies OK"
 
 install: check-deps
