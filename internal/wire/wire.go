@@ -1,12 +1,21 @@
 package wire
 
-import "encoding/json"
+import (
+	"bufio"
+	"encoding/json"
+	"io"
+	"net"
+	"os"
+)
 
 // Endpoints used across daemon and UI
 const (
-	EndpointUIReq   = "ipc:///tmp/tarragon-ui.ipc"      // REQ/REP for query initiation
-	EndpointUISub   = "ipc:///tmp/tarragon-updates.ipc" // PUB/SUB for async updates
-	EndpointPlugins = "ipc:///tmp/tarragon-plugins.ipc" // ROUTER for plugin workers
+	SocketUI      = "/tmp/tarragon-ui.sock"
+	SocketPlugins = "/tmp/tarragon-plugins.sock"
+	// Compatibility aliases for parallel workstreams still using legacy names.
+	EndpointUIReq   = SocketUI
+	EndpointUISub   = SocketUI
+	EndpointPlugins = SocketPlugins
 )
 
 // Message type constants (for plugins)
@@ -68,4 +77,49 @@ type PluginResponse struct {
 	Type    string          `json:"type"` // "response"
 	QueryID string          `json:"query_id"`
 	Data    json.RawMessage `json:"data"`
+}
+
+// WriteMsg marshals v as JSON and writes it followed by \n to w.
+func WriteMsg(w io.Writer, v any) error {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	_, err = w.Write(data)
+	return err
+}
+
+// ReadMsg reads one JSON line from scanner and unmarshals into v.
+func ReadMsg(scanner *bufio.Scanner, v any) error {
+	if !scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			return err
+		}
+		return io.EOF
+	}
+	return json.Unmarshal(scanner.Bytes(), v)
+}
+
+// NewScanner creates a bufio.Scanner for NDJSON with 1MB max line size.
+func NewScanner(r io.Reader) *bufio.Scanner {
+	s := bufio.NewScanner(r)
+	s.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	return s
+}
+
+// CleanupSocket removes a stale Unix socket path if present.
+func CleanupSocket(path string) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+// ListenUnix listens on a Unix domain socket after cleaning up any stale file.
+func ListenUnix(path string) (net.Listener, error) {
+	if err := CleanupSocket(path); err != nil {
+		return nil, err
+	}
+	return net.Listen("unix", path)
 }

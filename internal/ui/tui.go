@@ -1,16 +1,17 @@
 package ui
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/signal"
 	"sync"
 	"time"
 
-	"github.com/go-zeromq/zmq4"
 	"github.com/iMithrellas/tarragon/internal/wire"
 	"github.com/spf13/viper"
 	"golang.org/x/sys/unix"
@@ -36,15 +37,14 @@ func RunTUI() {
 			}
 			return 200
 		}(),
-		active: make(map[string]struct{}),
-		winch:  make(chan os.Signal, 1),
-		done:   make(chan struct{}),
+		winch: make(chan os.Signal, 1),
+		done:  make(chan struct{}),
 	}
-	if err := t.initSockets(); err != nil {
+	if err := t.initConn(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return
 	}
-	defer t.closeSockets()
+	defer t.closeConn()
 	if err := t.initTerminal(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return
@@ -56,7 +56,9 @@ func RunTUI() {
 
 type tui struct {
 	ctx             context.Context
-	req, sub        zmq4.Socket
+	conn            net.Conn
+	scanner         *bufio.Scanner
+	writeMu         sync.Mutex
 	clientID        string
 	input, lastSent string
 	lastQID         string
@@ -64,30 +66,24 @@ type tui struct {
 	sel, top        int
 	pendingAt       time.Time
 	debounce        int
-	active          map[string]struct{}
-	subMu, renderMu sync.Mutex
 	winch           chan os.Signal
 	done            chan struct{}
 	orig            *unix.Termios
 }
 
-func (t *tui) initSockets() error {
-	t.req = zmq4.NewReq(t.ctx)
-	if err := t.req.Dial(wire.EndpointUIReq); err != nil {
-		return fmt.Errorf("connect REQ: %w", err)
+func (t *tui) initConn() error {
+	conn, err := net.Dial("unix", wire.SocketUI)
+	if err != nil {
+		return fmt.Errorf("connect UI socket: %w", err)
 	}
-	t.sub = zmq4.NewSub(t.ctx)
-	if err := t.sub.Dial(wire.EndpointUISub); err != nil {
-		return fmt.Errorf("connect SUB: %w", err)
-	}
+	t.conn = conn
+	t.scanner = wire.NewScanner(conn)
 	return nil
 }
-func (t *tui) closeSockets() {
-	if t.req != nil {
-		_ = t.req.Close()
-	}
-	if t.sub != nil {
-		_ = t.sub.Close()
+
+func (t *tui) closeConn() {
+	if t.conn != nil {
+		_ = t.conn.Close()
 	}
 }
 
@@ -108,9 +104,7 @@ func (t *tui) loop() {
 	// debounced sender
 	go t.debounceSender()
 	// initial frame
-	t.renderMu.Lock()
 	redraw(t.input, t.rows, t.sel, t.top, t.lastQID)
-	t.renderMu.Unlock()
 
 	// key loop
 	rd := os.Stdin
@@ -183,9 +177,7 @@ func (t *tui) loop() {
 }
 
 func (t *tui) render() {
-	t.renderMu.Lock()
 	redraw(t.input, t.rows, t.sel, t.top, t.lastQID)
-	t.renderMu.Unlock()
 }
 func (t *tui) moveSel(delta int) {
 	if delta < 0 && t.sel > 0 {
@@ -203,57 +195,65 @@ func (t *tui) recvUpdates() {
 		List    []wire.ResultItem `json:"list"`
 	}
 	for {
-		select {
-		case <-t.done:
-			return
-		default:
-		}
-		msg, err := t.sub.Recv()
-		if err != nil || len(msg.Frames) < 2 {
-			if err != nil {
+		var raw json.RawMessage
+		err := wire.ReadMsg(t.scanner, &raw)
+		if err != nil {
+			if err != io.EOF {
 				fmt.Fprintf(os.Stderr, "recv: %v\n", err)
 			}
 			return
 		}
-		t.subMu.Lock()
-		_, ok := t.active[string(msg.Frames[0])]
-		t.subMu.Unlock()
-		if !ok {
+		var kind struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(raw, &kind) != nil {
 			continue
 		}
-		var upd wire.UpdateMessage
-		if json.Unmarshal(msg.Frames[1], &upd) != nil {
-			continue
-		}
-		var view aggView
-		if json.Unmarshal(upd.Payload, &view) != nil || view.QueryID == "" {
-			continue
-		}
-		t.lastQID = view.QueryID
-		var newRows []item
-		for _, it := range view.List {
-			id := it.ID
-			label := it.Label
-			if label == "" {
-				label = id
-			}
-			if id == "" {
-				id = label
-			}
-			if id == "" && label == "" {
+		switch kind.Type {
+		case "ack":
+			var ack wire.AckMessage
+			if json.Unmarshal(raw, &ack) != nil || ack.QueryID == "" {
 				continue
 			}
-			newRows = append(newRows, item{Plugin: it.Plugin, Choice: choice{ID: id, Label: label}})
-		}
-		t.rows = newRows
-		if t.sel >= len(t.rows) {
-			t.sel = len(t.rows) - 1
-			if t.sel < 0 {
-				t.sel = 0
+			t.lastQID = ack.QueryID
+			t.render()
+		case "update":
+			var upd wire.UpdateMessage
+			if json.Unmarshal(raw, &upd) != nil {
+				continue
 			}
+			var view aggView
+			if json.Unmarshal(upd.Payload, &view) != nil || view.QueryID == "" {
+				continue
+			}
+			t.lastQID = view.QueryID
+			var newRows []item
+			for _, it := range view.List {
+				id := it.ID
+				label := it.Label
+				if label == "" {
+					label = id
+				}
+				if id == "" {
+					id = label
+				}
+				if id == "" && label == "" {
+					continue
+				}
+				newRows = append(newRows, item{Plugin: it.Plugin, Choice: choice{ID: id, Label: label}})
+			}
+			t.rows = newRows
+			if t.sel >= len(t.rows) {
+				t.sel = len(t.rows) - 1
+				if t.sel < 0 {
+					t.sel = 0
+				}
+			}
+			adjustViewport(&t.top, t.sel, t.rows)
+			t.render()
+		default:
+			continue
 		}
-		adjustViewport(&t.top, t.sel, t.rows)
-		t.render()
 	}
 }
 
@@ -266,27 +266,15 @@ func (t *tui) debounceSender() {
 			}
 			continue
 		}
-		// send query
-		body, _ := json.Marshal(&wire.UIRequest{Type: "query", ClientID: t.clientID, Text: t.input})
-		if err := t.req.Send(zmq4.NewMsg(body)); err != nil {
+		if t.conn == nil {
 			continue
 		}
-		reply, err := t.req.Recv()
-		if err != nil || len(reply.Frames) == 0 {
+		t.writeMu.Lock()
+		err := wire.WriteMsg(t.conn, &wire.UIRequest{Type: "query", ClientID: t.clientID, Text: t.input})
+		t.writeMu.Unlock()
+		if err != nil {
 			continue
 		}
-		var ack wire.AckMessage
-		if json.Unmarshal(reply.Frames[0], &ack) != nil || ack.QueryID == "" {
-			continue
-		}
-		t.subMu.Lock()
-		for topic := range t.active {
-			_ = t.sub.SetOption(zmq4.OptionUnsubscribe, topic)
-		}
-		t.active = make(map[string]struct{})
-		_ = t.sub.SetOption(zmq4.OptionSubscribe, ack.QueryID)
-		t.active[ack.QueryID] = struct{}{}
-		t.subMu.Unlock()
 		t.lastSent, t.rows, t.sel, t.top = t.input, nil, 0, 0
 		t.render()
 		t.pendingAt = time.Time{}
@@ -294,15 +282,21 @@ func (t *tui) debounceSender() {
 }
 
 func (t *tui) sendSelect(it item) {
-	body, _ := json.Marshal(&wire.UIRequest{Type: "select", ClientID: t.clientID, QueryID: t.lastQID, Plugin: it.Plugin, Text: it.Choice.ID})
-	if err := t.req.Send(zmq4.NewMsg(body)); err == nil {
-		_, _ = t.req.Recv()
+	if t.conn == nil {
+		return
 	}
+	t.writeMu.Lock()
+	_ = wire.WriteMsg(t.conn, &wire.UIRequest{Type: "select", ClientID: t.clientID, QueryID: t.lastQID, Plugin: it.Plugin, Text: it.Choice.ID})
+	t.writeMu.Unlock()
 }
+
 func (t *tui) detach() {
-	body, _ := json.Marshal(&wire.UIRequest{Type: "detach", ClientID: t.clientID})
-	_ = t.req.Send(zmq4.NewMsg(body))
-	_, _ = t.req.Recv()
+	if t.conn == nil {
+		return
+	}
+	t.writeMu.Lock()
+	_ = wire.WriteMsg(t.conn, &wire.UIRequest{Type: "detach", ClientID: t.clientID})
+	t.writeMu.Unlock()
 }
 
 // redraw prints the UI using alternate buffer with a responsive layout.
