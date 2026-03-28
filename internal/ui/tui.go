@@ -33,6 +33,15 @@ const (
 	detailFocus                  // ↑↓/j/k scrolls JSON viewport
 )
 
+const (
+	jsonColorKey    = "\033[36m" // cyan
+	jsonColorString = "\033[32m" // green
+	jsonColorNumber = "\033[33m" // yellow
+	jsonColorBool   = "\033[35m" // magenta
+	jsonColorNull   = "\033[90m" // gray
+	jsonColorReset  = "\033[0m"
+)
+
 // ─── Message types (Tea) ─────────────────────────────────────────────────────
 
 type ackMsg struct{ queryID string }
@@ -703,7 +712,165 @@ func (m *Model) updateDetailContent() {
 	}
 
 	m.detail.GotoTop()
-	m.detail.SetContent(header.String() + "\n\n" + string(b))
+	m.detail.SetContent(header.String() + "\n\n" + colorizeJSON(string(b)))
+}
+
+// colorizeJSON adds lightweight ANSI syntax highlighting to a pretty JSON string.
+func colorizeJSON(s string) string {
+	if s == "" {
+		return s
+	}
+
+	var out strings.Builder
+	out.Grow(len(s) + len(s)/4)
+
+	for i := 0; i < len(s); {
+		c := s[i]
+
+		if c == '"' {
+			j := i + 1
+			for j < len(s) {
+				if s[j] == '\\' {
+					j += 2 // skip escaped char (including escaped quote)
+					continue
+				}
+				if s[j] == '"' {
+					j++
+					break
+				}
+				j++
+			}
+			if j > len(s) {
+				j = len(s)
+			}
+
+			tok := s[i:j]
+			k := j
+			for k < len(s) && isJSONWhitespace(s[k]) {
+				k++
+			}
+
+			if k < len(s) && s[k] == ':' {
+				out.WriteString(jsonColorKey)
+				out.WriteString(tok)
+				out.WriteString(jsonColorReset)
+			} else {
+				out.WriteString(jsonColorString)
+				out.WriteString(tok)
+				out.WriteString(jsonColorReset)
+			}
+			i = j
+			continue
+		}
+
+		if n := consumeJSONNumber(s[i:]); n > 0 {
+			out.WriteString(jsonColorNumber)
+			out.WriteString(s[i : i+n])
+			out.WriteString(jsonColorReset)
+			i += n
+			continue
+		}
+
+		if strings.HasPrefix(s[i:], "true") && isJSONTokenBoundary(s, i+4) {
+			out.WriteString(jsonColorBool)
+			out.WriteString("true")
+			out.WriteString(jsonColorReset)
+			i += 4
+			continue
+		}
+		if strings.HasPrefix(s[i:], "false") && isJSONTokenBoundary(s, i+5) {
+			out.WriteString(jsonColorBool)
+			out.WriteString("false")
+			out.WriteString(jsonColorReset)
+			i += 5
+			continue
+		}
+		if strings.HasPrefix(s[i:], "null") && isJSONTokenBoundary(s, i+4) {
+			out.WriteString(jsonColorNull)
+			out.WriteString("null")
+			out.WriteString(jsonColorReset)
+			i += 4
+			continue
+		}
+
+		out.WriteByte(c)
+		i++
+	}
+
+	return out.String()
+}
+
+func consumeJSONNumber(s string) int {
+	if len(s) == 0 {
+		return 0
+	}
+
+	i := 0
+	if s[i] == '-' {
+		i++
+		if i >= len(s) {
+			return 0
+		}
+	}
+
+	if s[i] == '0' {
+		i++
+	} else if isJSONDigit(s[i]) {
+		for i < len(s) && isJSONDigit(s[i]) {
+			i++
+		}
+	} else {
+		return 0
+	}
+
+	if i < len(s) && s[i] == '.' {
+		i++
+		if i >= len(s) || !isJSONDigit(s[i]) {
+			return 0
+		}
+		for i < len(s) && isJSONDigit(s[i]) {
+			i++
+		}
+	}
+
+	if i < len(s) && (s[i] == 'e' || s[i] == 'E') {
+		i++
+		if i < len(s) && (s[i] == '+' || s[i] == '-') {
+			i++
+		}
+		if i >= len(s) || !isJSONDigit(s[i]) {
+			return 0
+		}
+		for i < len(s) && isJSONDigit(s[i]) {
+			i++
+		}
+	}
+
+	if !isJSONTokenBoundary(s, i) {
+		return 0
+	}
+
+	return i
+}
+
+func isJSONWhitespace(b byte) bool {
+	return b == ' ' || b == '\n' || b == '\t' || b == '\r'
+}
+
+func isJSONDigit(b byte) bool {
+	return b >= '0' && b <= '9'
+}
+
+func isJSONTokenBoundary(s string, i int) bool {
+	if i >= len(s) {
+		return true
+	}
+	switch s[i] {
+	case ' ', '\n', '\t', '\r', ',', '}', ']', ':':
+		return true
+	default:
+		return false
+	}
 }
 
 // inputInsert inserts a rune at the current cursor position.
