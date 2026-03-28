@@ -2,7 +2,10 @@ package ui
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
+
+	"github.com/iMithrellas/tarragon/internal/wire"
 )
 
 func TestExtractChoices_VariantsWrapped(t *testing.T) {
@@ -76,5 +79,96 @@ func TestTruncate(t *testing.T) {
 		if got != c.out {
 			t.Fatalf("truncate(%q,%d) = %q; want %q", c.in, c.w, got, c.out)
 		}
+	}
+}
+
+// TestPluginColor verifies that pluginColor returns a consistent, palette-bound
+// color for any plugin name and that different names can yield different colors.
+func TestPluginColor(t *testing.T) {
+	// Determinism: same name must always return the same color
+	c1 := pluginColor("calc_python")
+	c2 := pluginColor("calc_python")
+	if c1 != c2 {
+		t.Fatalf("pluginColor is not deterministic: %q vs %q for same name", c1, c2)
+	}
+
+	// Coverage: ensure at least two distinct colors appear across varied names
+	names := []string{"calc_python", "template_python", "template_rust", "search_engine", "fzf", "web", "math", "notes"}
+	seen := make(map[string]bool)
+	for _, n := range names {
+		seen[string(pluginColor(n))] = true
+	}
+	if len(seen) < 2 {
+		t.Fatalf("expected ≥2 distinct colors from %d names, got %d", len(names), len(seen))
+	}
+
+	// Validity: result must be one of the defined palette entries
+	col := pluginColor("any_plugin")
+	found := false
+	for _, p := range pluginColors {
+		if col == p {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("pluginColor returned %q which is not in the palette", col)
+	}
+}
+
+// TestUpdateDetailContent verifies that after updating state the viewport
+// content is populated with properly pretty-printed JSON including elapsed_ms.
+func TestUpdateDetailContent(t *testing.T) {
+	m := NewModel("test-client", 200)
+	m.detail.Width = 60
+	m.detail.Height = 20
+	m.results = map[string]tuiAggResult{
+		"calc_python": {
+			ElapsedMs: 2.5,
+			Data:      json.RawMessage(`{"answer":42}`),
+		},
+	}
+	m.rows = []wire.ResultItem{{ID: "1", Label: "One", Plugin: "calc_python"}}
+	m.cursor = 0
+	m.updateDetailContent()
+
+	content := m.detail.View()
+	if !strings.Contains(content, "elapsed_ms") {
+		t.Fatalf("detail content missing 'elapsed_ms', got: %q", content)
+	}
+	if !strings.Contains(content, "2.5") {
+		t.Fatalf("detail content missing '2.5', got: %q", content)
+	}
+	if !strings.Contains(content, "answer") {
+		t.Fatalf("detail content missing 'answer', got: %q", content)
+	}
+}
+
+// TestUpdateDetailContent_NoSelection verifies fallback text when no row is selected.
+func TestUpdateDetailContent_NoSelection(t *testing.T) {
+	m := NewModel("test-client", 200)
+	m.detail.Width = 60
+	m.detail.Height = 20
+	// no rows
+	m.updateDetailContent()
+
+	content := m.detail.View()
+	if !strings.Contains(content, "no selection") {
+		t.Fatalf("expected '(no selection)', got: %q", content)
+	}
+}
+
+// TestPluginColorEmpty verifies empty string doesn't panic and returns a palette color.
+func TestPluginColorEmpty(t *testing.T) {
+	col := pluginColor("")
+	found := false
+	for _, p := range pluginColors {
+		if col == p {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("pluginColor(\"\") returned %q outside palette", col)
 	}
 }

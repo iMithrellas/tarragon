@@ -1,440 +1,769 @@
 package ui
 
+// tui.go — Bubble Tea + Lipgloss interactive TUI for the Tarragon launcher.
+//
+// Terminal input management (raw mode, alt-screen, cursor visibility) is
+// handled entirely by Bubble Tea.  All raw ANSI manipulation has been removed.
+
 import (
 	"bufio"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
-	"os"
-	"os/signal"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
+	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/iMithrellas/tarragon/internal/wire"
 	"github.com/spf13/viper"
-	"golang.org/x/sys/unix"
 )
+
+// ─── Focus enum ──────────────────────────────────────────────────────────────
+
+type focusArea int
+
+const (
+	listFocus   focusArea = iota // default: ↑↓ navigates result list
+	detailFocus                  // ↑↓/j/k scrolls JSON viewport
+)
+
+// ─── Message types (Tea) ─────────────────────────────────────────────────────
+
+type ackMsg struct{ queryID string }
+type updateMsg struct {
+	queryID string
+	rows    []wire.ResultItem
+	results map[string]tuiAggResult
+}
+type errMsg struct{ err error }
+type debounceTickMsg struct{ seq int }
+
+// ─── Data types ──────────────────────────────────────────────────────────────
+
+// tuiAggResult extends the bench-only aggResult with the full plugin data payload.
+type tuiAggResult struct {
+	ElapsedMs float64         `json:"elapsed_ms"`
+	Data      json.RawMessage `json:"data"`
+}
+
+// tuiAggView is the payload structure from daemon UpdateMessage for the TUI.
+type tuiAggView struct {
+	QueryID string                  `json:"query_id"`
+	Input   string                  `json:"input"`
+	Results map[string]tuiAggResult `json:"results"`
+	List    []wire.ResultItem       `json:"list"`
+}
 
 // choice represents a selectable suggestion from a plugin.
 type choice struct{ ID, Label string }
 
-// item is a flattened selectable row tagged with plugin source.
-type item struct {
-	Plugin string
-	Choice choice
+// connState holds connection-related fields that must not be copied by value.
+// It is always accessed via a pointer so that the Tea value-copy semantics
+// on Model do not trigger the sync.Mutex copy-lock check.
+type connState struct {
+	conn    net.Conn
+	scanner *bufio.Scanner
+	mu      sync.Mutex // serialises writes to conn
+	program *tea.Program
 }
 
-// RunTUI launches a minimal interactive TUI without external deps.
-func RunTUI() {
-	t := &tui{
-		ctx:      context.Background(),
-		clientID: fmt.Sprintf("cli-%d", time.Now().UnixNano()),
-		debounce: func() int {
-			if d := viper.GetInt("tuidebounce"); d > 0 {
-				return d
-			}
-			return 200
-		}(),
-		winch: make(chan os.Signal, 1),
-		done:  make(chan struct{}),
+func (cs *connState) writeMsg(v any) error {
+	if cs == nil || cs.conn == nil {
+		return nil
 	}
-	if err := t.initConn(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return
-	}
-	defer t.closeConn()
-	if err := t.initTerminal(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return
-	}
-	defer t.restoreTerminal()
-	signal.Notify(t.winch, unix.SIGWINCH)
-	t.loop()
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	return wire.WriteMsg(cs.conn, v)
 }
 
-type tui struct {
-	ctx             context.Context
-	conn            net.Conn
-	scanner         *bufio.Scanner
-	writeMu         sync.Mutex
-	renderMu        sync.Mutex
-	clientID        string
-	input, lastSent string
-	lastQID         string
-	rows            []item
-	sel, top        int
-	pendingAt       time.Time
-	debounce        int
-	winch           chan os.Signal
-	done            chan struct{}
-	orig            *unix.Termios
+// ─── Plugin color palette ─────────────────────────────────────────────────────
+
+// pluginColors is a small palette of distinct terminal-friendly colors.
+var pluginColors = []lipgloss.Color{
+	"#FF6B6B", // coral-red
+	"#4ECDC4", // teal
+	"#45B7D1", // sky-blue
+	"#96CEB4", // sage-green
+	"#FFEAA7", // pale-yellow
+	"#DDA0DD", // plum
+	"#98D8C8", // mint
+	"#F7DC6F", // golden
 }
 
-func (t *tui) initConn() error {
-	conn, err := net.Dial("unix", wire.SocketUI)
-	if err != nil {
-		return fmt.Errorf("connect UI socket: %w", err)
+// pluginColor hashes a plugin name to a consistent color from the palette.
+func pluginColor(name string) lipgloss.Color {
+	var h int
+	for _, r := range name {
+		h += int(r)
 	}
-	t.conn = conn
-	t.scanner = wire.NewScanner(conn)
-	return nil
+	return pluginColors[h%len(pluginColors)]
 }
 
-func (t *tui) closeConn() {
-	if t.conn != nil {
-		_ = t.conn.Close()
+// ─── Lipgloss styles ─────────────────────────────────────────────────────────
+
+var (
+	styleTitle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("205"))
+
+	styleSelectedRow = lipgloss.NewStyle().
+				Bold(true).
+				Background(lipgloss.Color("236")).
+				Foreground(lipgloss.Color("255"))
+
+	styleLatency = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("244")).
+			Italic(true)
+
+	styleStatusBar = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("244"))
+
+	styleBorderFocused = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("205"))
+
+	styleBorderNormal = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("238"))
+
+	styleCursor = lipgloss.NewStyle().
+			Background(lipgloss.Color("205")).
+			Foreground(lipgloss.Color("0"))
+)
+
+// ─── Model ───────────────────────────────────────────────────────────────────
+
+// Model is the Bubble Tea model for the Tarragon TUI.
+// All fields that contain a sync.Mutex are stored via *connState so that the
+// model can safely be passed by value through Bubble Tea's interface.
+type Model struct {
+	// connection (pointer — contains mutex, must not be value-copied)
+	cs *connState
+
+	// identity / query state
+	clientID    string
+	lastQID     string
+	lastSent    string
+	debounceMs  int
+	debounceSeq int // monotonically increasing; used to ignore stale ticks
+
+	// inline text input (managed manually — textinput requires atotto/clipboard)
+	inputValue string
+	inputPos   int // cursor position in runes
+
+	// result state
+	rows    []wire.ResultItem
+	results map[string]tuiAggResult
+	cursor  int
+
+	// UI state
+	focus   focusArea
+	loading bool
+	spinner spinner.Model
+	detail  viewport.Model
+
+	// dimensions
+	width  int
+	height int
+}
+
+// NewModel constructs an initial Model.  Call RunTUI() for the normal entry point.
+func NewModel(clientID string, debounceMs int) Model {
+	sp := spinner.New(spinner.WithSpinner(spinner.Dot))
+	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+
+	return Model{
+		clientID:   clientID,
+		debounceMs: debounceMs,
+		spinner:    sp,
+		results:    make(map[string]tuiAggResult),
+		width:      80,
+		height:     24,
+		detail:     viewport.New(60, 20),
 	}
 }
 
-func (t *tui) initTerminal() error {
-	var err error
-	if t.orig, err = enableRaw(); err != nil {
-		return fmt.Errorf("enable raw: %w", err)
-	}
-	enterAltScreen()
-	hideCursor()
-	return nil
+// ─── Tea interface ───────────────────────────────────────────────────────────
+
+func (m Model) Init() tea.Cmd {
+	return tea.Batch(
+		m.spinner.Tick,
+		m.startReaderCmd(),
+	)
 }
-func (t *tui) restoreTerminal() { showCursor(); exitAltScreen(); restoreTerm(t.orig) }
 
-func (t *tui) loop() {
-	// updates
-	go t.recvUpdates()
-	// debounced sender
-	go t.debounceSender()
-	// initial frame
-	t.render()
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
 
-	// key loop
-	rd := os.Stdin
-	buf := make([]byte, 8)
-	for {
-		select {
-		case <-t.winch:
-			t.render()
-		default:
+	switch msg := msg.(type) {
+
+	// ── Window resize ──────────────────────────────────────────────────────
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		m.resizeViewport()
+
+	// ── Spinner tick ───────────────────────────────────────────────────────
+	case spinner.TickMsg:
+		if m.loading {
+			var cmd tea.Cmd
+			m.spinner, cmd = m.spinner.Update(msg)
+			cmds = append(cmds, cmd)
 		}
-		n, err := rd.Read(buf[:1])
-		if err != nil {
-			if err != io.EOF {
-				fmt.Fprintf(os.Stderr, "read: %v\n", err)
-			}
+
+	// ── Background reader messages ─────────────────────────────────────────
+	case ackMsg:
+		m.lastQID = msg.queryID
+		m.loading = true
+		cmds = append(cmds, m.spinner.Tick)
+
+	case updateMsg:
+		if m.lastQID == "" || msg.queryID != m.lastQID {
 			break
 		}
-		if n == 0 {
-			continue
+		m.loading = false
+		m.rows = msg.rows
+		m.results = msg.results
+		// clamp cursor
+		if m.cursor >= len(m.rows) {
+			m.cursor = max(0, len(m.rows)-1)
 		}
-		b := buf[0]
-		if b == 0x1b { // ESC sequences
-			if _, err := rd.Read(buf[:1]); err == nil && buf[0] == '[' {
-				if _, err := rd.Read(buf[:1]); err == nil {
-					switch buf[0] {
-					case 'A':
-						t.moveSel(-1)
-					case 'B':
-						t.moveSel(1)
-					}
+		m.updateDetailContent()
+
+	case errMsg:
+		// connection error — quit gracefully
+		return m, tea.Quit
+
+	// ── Debounce tick ──────────────────────────────────────────────────────
+	case debounceTickMsg:
+		if msg.seq != m.debounceSeq {
+			break // stale tick — ignore
+		}
+		if m.inputValue != m.lastSent {
+			cmd := m.doSendQuery(m.inputValue)
+			cmds = append(cmds, cmd)
+		}
+
+	// ── Keyboard ───────────────────────────────────────────────────────────
+	case tea.KeyMsg:
+		switch msg.String() {
+
+		case "ctrl+c":
+			m.doSendDetach()
+			return m, tea.Quit
+
+		case "esc":
+			if m.focus == detailFocus {
+				m.focus = listFocus
+			} else if m.inputValue != "" {
+				m.inputValue = ""
+				m.inputPos = 0
+				m.rows = nil
+				m.results = make(map[string]tuiAggResult)
+				m.cursor = 0
+				m.lastQID = ""
+				m.loading = false
+				m.updateDetailContent()
+			}
+
+		case "tab":
+			if m.showDetail() {
+				if m.focus == listFocus {
+					m.focus = detailFocus
+				} else {
+					m.focus = listFocus
 				}
 			}
-			continue
-		}
-		switch b {
-		case 3, 4: // Ctrl-C/D
-			t.detach()
-			close(t.done)
-			fmt.Println("\r")
-			return
-		case 13, 10: // Enter
-			var selected item
-			doSelect := false
-			t.renderMu.Lock()
-			if t.sel >= 0 && t.sel < len(t.rows) && t.lastQID != "" {
-				selected = t.rows[t.sel]
-				doSelect = true
-			} else if t.input != t.lastSent {
-				t.pendingAt = time.Now().Add(-time.Hour)
+
+		case "enter":
+			if m.focus == listFocus && len(m.rows) > 0 && m.lastQID != "" {
+				m.doSendSelect()
 			}
-			t.renderMu.Unlock()
-			if doSelect {
-				t.sendSelect(selected)
+
+		case "q":
+			if m.inputValue == "" {
+				m.doSendDetach()
+				return m, tea.Quit
 			}
-			t.render()
-		case 127: // Backspace
-			t.renderMu.Lock()
-			if len(t.input) > 0 {
-				t.input = t.input[:len(t.input)-1]
-				t.pendingAt = time.Now()
+			// 'q' is a printable char — insert it
+			m.inputInsert('q')
+			cmds = append(cmds, m.scheduleDebounce())
+
+		case "up":
+			if m.focus == detailFocus {
+				var cmd tea.Cmd
+				m.detail, cmd = m.detail.Update(msg)
+				cmds = append(cmds, cmd)
+			} else {
+				if m.cursor > 0 {
+					m.cursor--
+					m.updateDetailContent()
+				}
 			}
-			t.sel, t.top = 0, 0
-			t.renderMu.Unlock()
-			t.render()
+
+		case "down":
+			if m.focus == detailFocus {
+				var cmd tea.Cmd
+				m.detail, cmd = m.detail.Update(msg)
+				cmds = append(cmds, cmd)
+			} else {
+				if m.cursor < len(m.rows)-1 {
+					m.cursor++
+					m.updateDetailContent()
+				}
+			}
+
+		case "j":
+			if m.focus == detailFocus {
+				var cmd tea.Cmd
+				m.detail, cmd = m.detail.Update(tea.KeyMsg{Type: tea.KeyDown})
+				cmds = append(cmds, cmd)
+			} else {
+				m.inputInsert('j')
+				cmds = append(cmds, m.scheduleDebounce())
+			}
+
+		case "k":
+			if m.focus == detailFocus {
+				var cmd tea.Cmd
+				m.detail, cmd = m.detail.Update(tea.KeyMsg{Type: tea.KeyUp})
+				cmds = append(cmds, cmd)
+			} else {
+				m.inputInsert('k')
+				cmds = append(cmds, m.scheduleDebounce())
+			}
+
+		case "backspace", "ctrl+h":
+			if m.focus != detailFocus {
+				if m.inputPos > 0 {
+					runes := []rune(m.inputValue)
+					m.inputValue = string(append(runes[:m.inputPos-1], runes[m.inputPos:]...))
+					m.inputPos--
+					m.cursor = 0
+					cmds = append(cmds, m.scheduleDebounce())
+				}
+			}
+
+		case "left":
+			if m.focus != detailFocus && m.inputPos > 0 {
+				m.inputPos--
+			}
+
+		case "right":
+			if m.focus != detailFocus {
+				runes := []rune(m.inputValue)
+				if m.inputPos < len(runes) {
+					m.inputPos++
+				}
+			}
+
+		case "home", "ctrl+a":
+			if m.focus != detailFocus {
+				m.inputPos = 0
+			}
+
+		case "end", "ctrl+e":
+			if m.focus != detailFocus {
+				m.inputPos = utf8.RuneCountInString(m.inputValue)
+			}
+
 		default:
-			if b >= 32 && b <= 126 {
-				t.renderMu.Lock()
-				t.input += string(b)
-				t.pendingAt = time.Now()
-				t.sel, t.top = 0, 0
-				t.renderMu.Unlock()
-				t.render()
+			// Printable rune input (skip 'q' which is handled above)
+			if msg.Type == tea.KeyRunes && msg.String() != "q" {
+				for _, r := range msg.Runes {
+					m.inputInsert(r)
+				}
+				cmds = append(cmds, m.scheduleDebounce())
 			}
-			t.renderMu.Lock()
-			emptyInput := t.input == ""
-			t.renderMu.Unlock()
-			if b == 'q' && emptyInput {
-				t.detach()
-				close(t.done)
-				fmt.Println("\r")
+		}
+	}
+
+	return m, tea.Batch(cmds...)
+}
+
+func (m Model) View() string {
+	// ── Header bar ──────────────────────────────────────────────────────────
+	header := styleTitle.Render("Tarragon") + "  " + m.renderInput()
+	if m.loading {
+		header += "  " + m.spinner.View()
+	}
+
+	// ── Status bar ──────────────────────────────────────────────────────────
+	var statusParts []string
+	statusParts = append(statusParts, fmt.Sprintf("%d result(s)", len(m.rows)))
+	statusParts = append(statusParts, "↑↓ navigate")
+	if m.showDetail() {
+		statusParts = append(statusParts, "Tab detail")
+	}
+	statusParts = append(statusParts, "Enter select")
+	statusParts = append(statusParts, "q quit")
+	status := styleStatusBar.Render(strings.Join(statusParts, " • "))
+
+	// ── Panels ──────────────────────────────────────────────────────────────
+	// Available height for panels (subtract header + status bar + 2 border lines each)
+	panelH := m.height - 4 // header(1) + status(1) + top-border(1) + bot-border(1)
+	if panelH < 3 {
+		panelH = 3
+	}
+
+	left := m.renderList(panelH)
+	if m.showDetail() {
+		right := m.renderDetail(panelH)
+		panels := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
+		return lipgloss.JoinVertical(lipgloss.Left, header, panels, status)
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, header, left, status)
+}
+
+// ─── View helpers ─────────────────────────────────────────────────────────────
+
+func (m Model) showDetail() bool {
+	return m.width >= 80
+}
+
+// renderInput renders the text input with an inline block cursor.
+func (m Model) renderInput() string {
+	runes := []rune(m.inputValue)
+	var b strings.Builder
+	b.WriteString("> ")
+	for i, r := range runes {
+		if i == m.inputPos {
+			b.WriteString(styleCursor.Render(string(r)))
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	// Block cursor at end of input
+	if m.inputPos == len(runes) {
+		b.WriteString(styleCursor.Render(" "))
+	}
+	return b.String()
+}
+
+// renderList renders the result list panel with Lipgloss rounded borders.
+func (m Model) renderList(height int) string {
+	var panelW int
+	if m.showDetail() {
+		panelW = m.width * 40 / 100 // 40% for left panel
+	} else {
+		panelW = m.width // full width (border accounts for 2 chars)
+	}
+	if panelW < 12 {
+		panelW = 12
+	}
+	innerW := panelW - 2 // subtract left+right border
+
+	// Title
+	title := fmt.Sprintf("Results (%d)", len(m.rows))
+
+	// Build row lines
+	contentHeight := height - 2 // border top+bottom
+	if contentHeight < 1 {
+		contentHeight = 1
+	}
+	lines := make([]string, 0, len(m.rows))
+	for i, row := range m.rows {
+		label := row.Label
+		if label == "" {
+			label = row.ID
+		}
+
+		latency := ""
+		if res, ok := m.results[row.Plugin]; ok && res.ElapsedMs > 0 {
+			latency = styleLatency.Render(fmt.Sprintf("%.1fms", res.ElapsedMs))
+		}
+
+		col := pluginColor(row.Plugin)
+		dot := lipgloss.NewStyle().Foreground(col).Render("●")
+
+		if i == m.cursor {
+			lines = append(lines, styleSelectedRow.Width(innerW).Render(
+				fmt.Sprintf(" → %s %-*s  %s",
+					dot,
+					innerW/2,
+					truncate(label, innerW/2),
+					truncate(row.Plugin, innerW/5),
+				),
+			))
+		} else {
+			lines = append(lines, fmt.Sprintf("   %s %-*s  %s  %s",
+				dot,
+				innerW/2,
+				truncate(label, innerW/2),
+				truncate(row.Plugin, innerW/5),
+				latency,
+			))
+		}
+	}
+
+	// Pad to fill available height
+	for len(lines) < contentHeight {
+		lines = append(lines, "")
+	}
+
+	content := styleTitle.Render(title) + "\n" + strings.Join(lines[:min(len(lines), contentHeight)], "\n")
+
+	st := styleBorderNormal
+	if m.focus == listFocus {
+		st = styleBorderFocused
+	}
+	return st.Width(innerW).Height(height - 2).Render(content)
+}
+
+// renderDetail renders the JSON detail panel for the selected result.
+func (m Model) renderDetail(height int) string {
+	leftW := m.width * 40 / 100
+	rightW := m.width - leftW
+	if rightW < 12 {
+		rightW = 12
+	}
+	innerW := rightW - 2 // subtract border
+
+	// Plugin for title / border color
+	plugin := ""
+	if len(m.rows) > 0 && m.cursor < len(m.rows) {
+		plugin = m.rows[m.cursor].Plugin
+	}
+
+	col := pluginColor(plugin)
+	titleText := "Detail"
+	if plugin != "" {
+		titleText = "Detail: " + plugin
+	}
+	title := lipgloss.NewStyle().Foreground(col).Bold(true).Render(titleText)
+
+	// Viewport occupies height minus title line and borders
+	m.detail.Width = innerW
+	m.detail.Height = height - 4
+
+	st := styleBorderNormal
+	if m.focus == detailFocus {
+		st = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(col)
+	}
+
+	return st.Width(innerW).Height(height - 2).Render(title + "\n" + m.detail.View())
+}
+
+// ─── State helpers ─────────────────────────────────────────────────────────────
+
+// resizeViewport recalculates viewport dimensions after a window resize.
+func (m *Model) resizeViewport() {
+	if m.width < 80 {
+		return
+	}
+	leftW := m.width * 40 / 100
+	rightW := m.width - leftW - 4
+	panelH := m.height - 6
+	if rightW < 10 {
+		rightW = 10
+	}
+	if panelH < 3 {
+		panelH = 3
+	}
+	m.detail.Width = rightW
+	m.detail.Height = panelH
+}
+
+// updateDetailContent pretty-prints the selected result's JSON into the viewport.
+func (m *Model) updateDetailContent() {
+	if len(m.rows) == 0 || m.cursor >= len(m.rows) {
+		m.detail.SetContent("(no selection)")
+		return
+	}
+	plugin := m.rows[m.cursor].Plugin
+	res, ok := m.results[plugin]
+	if !ok {
+		m.detail.SetContent("(no data)")
+		return
+	}
+	b, err := json.MarshalIndent(res, "", "  ")
+	if err != nil {
+		m.detail.SetContent(fmt.Sprintf("(marshal error: %v)", err))
+		return
+	}
+	m.detail.GotoTop()
+	m.detail.SetContent(string(b))
+}
+
+// inputInsert inserts a rune at the current cursor position.
+func (m *Model) inputInsert(r rune) {
+	runes := []rune(m.inputValue)
+	runes = append(runes[:m.inputPos], append([]rune{r}, runes[m.inputPos:]...)...)
+	m.inputValue = string(runes)
+	m.inputPos++
+	m.cursor = 0
+}
+
+// scheduleDebounce returns a command that fires a debounceTickMsg after the
+// configured debounce duration.  It increments the sequence counter so that
+// any previous pending tick is rendered stale.
+func (m *Model) scheduleDebounce() tea.Cmd {
+	m.debounceSeq++
+	seq := m.debounceSeq
+	delay := time.Duration(m.debounceMs) * time.Millisecond
+	return tea.Tick(delay, func(_ time.Time) tea.Msg {
+		return debounceTickMsg{seq: seq}
+	})
+}
+
+// doSendQuery sends a query to the daemon and returns a spinner tick cmd.
+func (m *Model) doSendQuery(text string) tea.Cmd {
+	if m.cs == nil {
+		return nil
+	}
+	if err := m.cs.writeMsg(&wire.UIRequest{Type: "query", ClientID: m.clientID, Text: text}); err != nil {
+		return nil
+	}
+	m.lastSent = text
+	m.rows = nil
+	m.results = make(map[string]tuiAggResult)
+	m.cursor = 0
+	m.loading = true
+	m.updateDetailContent()
+	return m.spinner.Tick
+}
+
+// doSendSelect sends a select message for the currently highlighted row.
+func (m *Model) doSendSelect() {
+	if m.cs == nil || len(m.rows) == 0 || m.cursor >= len(m.rows) {
+		return
+	}
+	row := m.rows[m.cursor]
+	_ = m.cs.writeMsg(&wire.UIRequest{
+		Type:     "select",
+		ClientID: m.clientID,
+		QueryID:  m.lastQID,
+		Plugin:   row.Plugin,
+		Text:     row.ID,
+	})
+}
+
+// doSendDetach sends a detach message to the daemon.
+func (m *Model) doSendDetach() {
+	if m.cs == nil {
+		return
+	}
+	_ = m.cs.writeMsg(&wire.UIRequest{Type: "detach", ClientID: m.clientID})
+}
+
+// startReaderCmd returns a tea.Cmd that spawns a goroutine to read messages
+// from the daemon socket and forward them to Tea via program.Send.
+func (m Model) startReaderCmd() tea.Cmd {
+	cs := m.cs // capture pointer — safe across value copies
+	return func() tea.Msg {
+		go func() {
+			if cs == nil || cs.scanner == nil || cs.program == nil {
 				return
 			}
-		}
-	}
-}
-
-func (t *tui) render() {
-	t.renderMu.Lock()
-	defer t.renderMu.Unlock()
-	redraw(t.input, t.rows, t.sel, t.top, t.lastQID)
-}
-func (t *tui) moveSel(delta int) {
-	t.renderMu.Lock()
-	if delta < 0 && t.sel > 0 {
-		t.sel--
-	} else if delta > 0 && t.sel+1 < len(t.rows) {
-		t.sel++
-	}
-	adjustViewport(&t.top, t.sel, t.rows)
-	t.renderMu.Unlock()
-	t.render()
-}
-
-func (t *tui) recvUpdates() {
-	type aggView struct {
-		QueryID string            `json:"query_id"`
-		List    []wire.ResultItem `json:"list"`
-	}
-	for {
-		var raw json.RawMessage
-		err := wire.ReadMsg(t.scanner, &raw)
-		if err != nil {
-			if err != io.EOF {
-				fmt.Fprintf(os.Stderr, "recv: %v\n", err)
-			}
-			return
-		}
-		var kind struct {
-			Type string `json:"type"`
-		}
-		if json.Unmarshal(raw, &kind) != nil {
-			continue
-		}
-		switch kind.Type {
-		case "ack":
-			var ack wire.AckMessage
-			if json.Unmarshal(raw, &ack) != nil || ack.QueryID == "" {
-				continue
-			}
-			t.renderMu.Lock()
-			t.lastQID = ack.QueryID
-			t.renderMu.Unlock()
-			t.render()
-		case "update":
-			var upd wire.UpdateMessage
-			if json.Unmarshal(raw, &upd) != nil {
-				continue
-			}
-			var view aggView
-			if json.Unmarshal(upd.Payload, &view) != nil || view.QueryID == "" {
-				continue
-			}
-			t.renderMu.Lock()
-			if t.lastQID == "" || view.QueryID != t.lastQID {
-				t.renderMu.Unlock()
-				continue
-			}
-			var newRows []item
-			for _, it := range view.List {
-				id := it.ID
-				label := it.Label
-				if label == "" {
-					label = id
+			for {
+				var raw json.RawMessage
+				if err := wire.ReadMsg(cs.scanner, &raw); err != nil {
+					if err != io.EOF {
+						cs.program.Send(errMsg{err: err})
+					}
+					return
 				}
-				if id == "" {
-					id = label
+				var kind struct {
+					Type string `json:"type"`
 				}
-				if id == "" && label == "" {
+				if json.Unmarshal(raw, &kind) != nil {
 					continue
 				}
-				newRows = append(newRows, item{Plugin: it.Plugin, Choice: choice{ID: id, Label: label}})
-			}
-			t.rows = newRows
-			if t.sel >= len(t.rows) {
-				t.sel = len(t.rows) - 1
-				if t.sel < 0 {
-					t.sel = 0
+				switch kind.Type {
+				case "ack":
+					var ack wire.AckMessage
+					if json.Unmarshal(raw, &ack) != nil || ack.QueryID == "" {
+						continue
+					}
+					cs.program.Send(ackMsg{queryID: ack.QueryID})
+
+				case "update":
+					var upd wire.UpdateMessage
+					if json.Unmarshal(raw, &upd) != nil {
+						continue
+					}
+					var view tuiAggView
+					if json.Unmarshal(upd.Payload, &view) != nil || view.QueryID == "" {
+						continue
+					}
+					// Normalise list rows
+					rows := make([]wire.ResultItem, 0, len(view.List))
+					for _, it := range view.List {
+						id := it.ID
+						label := it.Label
+						if id == "" {
+							id = label
+						}
+						if label == "" {
+							label = id
+						}
+						if id == "" && label == "" {
+							continue
+						}
+						rows = append(rows, wire.ResultItem{
+							ID:     id,
+							Label:  label,
+							Plugin: it.Plugin,
+							Score:  it.Score,
+						})
+					}
+					cs.program.Send(updateMsg{
+						queryID: view.QueryID,
+						rows:    rows,
+						results: view.Results,
+					})
 				}
 			}
-			adjustViewport(&t.top, t.sel, t.rows)
-			t.renderMu.Unlock()
-			t.render()
-		default:
-			continue
-		}
+		}()
+		return nil // initial return is a no-op message
 	}
 }
 
-func (t *tui) debounceSender() {
-	for {
-		time.Sleep(25 * time.Millisecond)
-		t.renderMu.Lock()
-		pendingAt := t.pendingAt
-		debounce := t.debounce
-		input := t.input
-		lastSent := t.lastSent
-		t.renderMu.Unlock()
-		if pendingAt.IsZero() || time.Since(pendingAt) < time.Duration(debounce)*time.Millisecond || input == lastSent {
-			if !pendingAt.IsZero() && input == lastSent {
-				t.renderMu.Lock()
-				t.pendingAt = time.Time{}
-				t.renderMu.Unlock()
-			}
-			continue
-		}
-		if t.conn == nil {
-			continue
-		}
-		t.writeMu.Lock()
-		err := wire.WriteMsg(t.conn, &wire.UIRequest{Type: "query", ClientID: t.clientID, Text: input})
-		t.writeMu.Unlock()
-		if err != nil {
-			continue
-		}
-		t.renderMu.Lock()
-		t.lastSent, t.rows, t.sel, t.top = input, nil, 0, 0
-		t.pendingAt = time.Time{}
-		t.renderMu.Unlock()
-		t.render()
-	}
-}
+// ─── Public entry point ───────────────────────────────────────────────────────
 
-func (t *tui) sendSelect(it item) {
-	if t.conn == nil {
+// RunTUI dials the daemon socket and runs the interactive Bubble Tea TUI.
+func RunTUI() {
+	debounceMs := viper.GetInt("tuidebounce")
+	if debounceMs <= 0 {
+		debounceMs = 200
+	}
+
+	clientID := fmt.Sprintf("cli-%d", time.Now().UnixNano())
+	conn, err := net.Dial("unix", wire.SocketUI)
+	if err != nil {
+		fmt.Println("connect UI socket:", err)
 		return
 	}
-	t.writeMu.Lock()
-	t.renderMu.Lock()
-	qid := t.lastQID
-	t.renderMu.Unlock()
-	_ = wire.WriteMsg(t.conn, &wire.UIRequest{Type: "select", ClientID: t.clientID, QueryID: qid, Plugin: it.Plugin, Text: it.Choice.ID})
-	t.writeMu.Unlock()
-}
+	defer func() { _ = conn.Close() }()
 
-func (t *tui) detach() {
-	if t.conn == nil {
-		return
+	cs := &connState{
+		conn:    conn,
+		scanner: wire.NewScanner(conn),
 	}
-	t.writeMu.Lock()
-	_ = wire.WriteMsg(t.conn, &wire.UIRequest{Type: "detach", ClientID: t.clientID})
-	t.writeMu.Unlock()
-}
 
-// redraw prints the UI using alternate buffer with a responsive layout.
-func redraw(input string, rows []item, sel int, top int, qid string) {
-	// Clear and home
-	fmt.Print("\033[H\033[2J")
-	// Get terminal size
-	h, w := termSize()
-	if h < 5 {
-		h = 5
-	}
-	if w < 20 {
-		w = 20
-	}
-	// Header
-	title := "Tarragon TUI"
-	printLine(fmt.Sprintf("\033[1m%s\033[0m", title), w)
-	// Input line
-	qline := fmt.Sprintf("Query: %s", input)
-	printLine(truncate(qline, w), w)
-	printLine("", w)
-	// Results area height (reserve 1 line for status)
-	area := h - 4
-	if area < 1 {
-		area = 1
-	}
-	// Render rows within viewport
-	end := top + area
-	if end > len(rows) {
-		end = len(rows)
-	}
-	for i := top; i < end; i++ {
-		it := rows[i]
-		content := truncate(fmt.Sprintf("[%s] %s", it.Plugin, it.Choice.Label), w)
-		if i == sel {
-			printLine("\033[7m"+content+"\033[0m", w)
-		} else {
-			printLine(content, w)
-		}
-	}
-	// Fill blank lines if fewer than area
-	for i := end; i < top+area; i++ {
-		printLine("", w)
-	}
-	// Status line
-	more := 0
-	if len(rows) > end {
-		more = len(rows) - end
-	}
-	status := fmt.Sprintf("%d results%s • ↑/↓ move • Enter select • Ctrl-C quit", len(rows), func() string {
-		if more > 0 {
-			return fmt.Sprintf(" (+%d)", more)
-		}
-		return ""
-	}())
-	if qid != "" {
-		status = fmt.Sprintf("%s • id=%s", status, qid)
-	}
-	printLine(truncate(status, w), w)
-	// Move cursor to input end (row 2, col after prefix+input)
-	col := len("Query: ") + len(input) + 1
-	if col < 1 {
-		col = 1
-	}
-	if col > w {
-		col = w
-	}
-	fmt.Printf("\033[2;%dH", col)
-}
+	m := NewModel(clientID, debounceMs)
+	m.cs = cs
 
-func adjustViewport(top *int, sel int, rows []item) {
-	h, _ := termSize()
-	area := h - 4
-	if area < 1 {
-		area = 1
-	}
-	if sel < *top {
-		*top = sel
-	}
-	if sel >= *top+area {
-		*top = sel - area + 1
-	}
-	if *top < 0 {
-		*top = 0
-	}
-	if *top > len(rows) {
-		*top = len(rows)
+	p := tea.NewProgram(m, tea.WithAltScreen())
+	cs.program = p
+
+	if _, err := p.Run(); err != nil {
+		fmt.Println("TUI error:", err)
 	}
 }
 
-func termSize() (h, w int) {
-	ws, err := unix.IoctlGetWinsize(int(os.Stdout.Fd()), unix.TIOCGWINSZ)
-	if err != nil || ws == nil || ws.Row == 0 || ws.Col == 0 {
-		return 24, 80
-	}
-	return int(ws.Row), int(ws.Col)
-}
+// ─── Helpers (kept for backward-compat / tests) ───────────────────────────────
 
+// truncate shortens s to at most w visible characters, adding "…" if truncated.
 func truncate(s string, w int) string {
 	if w <= 0 {
 		return ""
@@ -451,58 +780,12 @@ func truncate(s string, w int) string {
 	return s[:w-1] + "…"
 }
 
-// (no table helpers in this variant)
-
-func enterAltScreen() { fmt.Print("\033[?1049h\033[H\033[2J") }
-func exitAltScreen()  { fmt.Print("\033[?1049l\033[0m") }
-func hideCursor()     { fmt.Print("\033[?25l") }
-func showCursor()     { fmt.Print("\033[?25h") }
-
-// Ensure each printed line starts at column 1 and ends with CRLF
-func printLine(s string, w int) {
-	if w > 0 {
-		s = truncate(s, w)
-	}
-	fmt.Print("\r")
-	fmt.Print(s)
-	fmt.Print("\r\n")
-}
-
-// enableRaw switches TTY to raw mode (Unix).
-func enableRaw() (*unix.Termios, error) {
-	fd := int(os.Stdin.Fd())
-	orig, err := unix.IoctlGetTermios(fd, unix.TCGETS)
-	if err != nil {
-		return nil, err
-	}
-	raw := *orig
-	raw.Iflag &^= unix.IGNBRK | unix.BRKINT | unix.PARMRK | unix.ISTRIP | unix.INLCR | unix.IGNCR | unix.ICRNL | unix.IXON
-	// Keep OPOST so that newlines and carriage returns behave consistently
-	raw.Lflag &^= unix.ECHO | unix.ECHONL | unix.ICANON | unix.ISIG | unix.IEXTEN
-	raw.Cflag &^= unix.CSIZE | unix.PARENB
-	raw.Cflag |= unix.CS8
-	raw.Cc[unix.VMIN] = 1
-	raw.Cc[unix.VTIME] = 0
-	if err := unix.IoctlSetTermios(fd, unix.TCSETS, &raw); err != nil {
-		return nil, err
-	}
-	return orig, nil
-}
-
-func restoreTerm(orig *unix.Termios) {
-	if orig == nil {
-		return
-	}
-	_ = unix.IoctlSetTermios(int(os.Stdin.Fd()), unix.TCSETS, orig)
-}
-
 // extractChoices tries to parse a plugin payload into a list of selectable items.
 // It supports a few common shapes:
-// - { "suggestions": [ {"id":"...", "label"|"title"|"text":"..."}, ... ] }
-// - [ {"id":"...", ...}, ... ]
-// - [ "string", ... ] (id and label are the string)
+//   - { "suggestions": [ {"id":"...", "label"|"title"|"text":"..."}, ... ] }
+//   - [ {"id":"...", ...}, ... ]
+//   - [ "string", ... ] (id and label are the string)
 func extractChoices(raw json.RawMessage) []choice {
-	// The raw is an aggResult JSON; unwrap if necessary
 	type resultWrap struct {
 		ElapsedMs float64         `json:"elapsed_ms"`
 		Data      json.RawMessage `json:"data"`
@@ -511,7 +794,6 @@ func extractChoices(raw json.RawMessage) []choice {
 	if err := json.Unmarshal(raw, &wrap); err == nil && len(wrap.Data) > 0 {
 		raw = wrap.Data
 	}
-	// Try object with suggestions/variants/items/choices fields
 	var obj map[string]json.RawMessage
 	if json.Unmarshal(raw, &obj) == nil {
 		for _, k := range []string{"suggestions", "variants", "items", "choices"} {
@@ -522,7 +804,6 @@ func extractChoices(raw json.RawMessage) []choice {
 			}
 		}
 	}
-	// Try array at top level
 	if chs := parseArrayChoices(raw); len(chs) > 0 {
 		return chs
 	}
@@ -530,7 +811,6 @@ func extractChoices(raw json.RawMessage) []choice {
 }
 
 func parseArrayChoices(raw json.RawMessage) []choice {
-	// array of objects
 	var objs []map[string]any
 	if json.Unmarshal(raw, &objs) == nil && len(objs) > 0 {
 		out := make([]choice, 0, len(objs))
@@ -564,7 +844,6 @@ func parseArrayChoices(raw json.RawMessage) []choice {
 			return out
 		}
 	}
-	// array of strings
 	var strs []string
 	if json.Unmarshal(raw, &strs) == nil && len(strs) > 0 {
 		out := make([]choice, 0, len(strs))
