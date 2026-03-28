@@ -155,6 +155,11 @@ func init() {
 	// Register config commands
 	rootCmd.AddCommand(configCmd)
 	configCmd.AddCommand(configGenCmd)
+
+	// Register plugin management commands
+	rootCmd.AddCommand(installPluginCmd)
+	rootCmd.AddCommand(uninstallPluginCmd)
+	rootCmd.AddCommand(listPluginsCmd)
 }
 
 func Execute() {
