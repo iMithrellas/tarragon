@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/iMithrellas/tarragon/internal/db"
 	"github.com/iMithrellas/tarragon/internal/plugins"
 	"github.com/iMithrellas/tarragon/internal/wire"
 	"github.com/spf13/viper"
@@ -42,14 +43,29 @@ func RunDaemon() {
 	if orderingMode == "" {
 		orderingMode = "global"
 	}
-	store := newAggregateStore(maxAgg, orderingMode)
+	frecencyWeight := viper.GetFloat64("frecency_weight")
+	if frecencyWeight == 0 {
+		frecencyWeight = 0.3
+	}
+	database, err := db.Open(viper.GetString("db_path"))
+	if err != nil {
+		log.Printf("DB open error (frecency disabled): %v", err)
+	}
+	if database != nil {
+		defer func() {
+			if err := database.Close(); err != nil {
+				log.Printf("DB close error: %v", err)
+			}
+		}()
+	}
+	store := newAggregateStore(maxAgg, orderingMode, database, frecencyWeight)
 	ui := newUIRegistry()
 
 	// Start plugin listener BEFORE spawning plugin processes, so the
 	// socket is ready to accept connections when plugins start.
 	reqOut, registry := startPluginListener(ctx, store, ui)
 	if viper.GetBool("run_ipc") {
-		go startUIServer(ctx, mgr, reqOut, registry, store, ui)
+		go startUIServer(ctx, mgr, reqOut, registry, store, ui, database)
 	}
 
 	// Now start persistent plugin processes; the listener is already up.

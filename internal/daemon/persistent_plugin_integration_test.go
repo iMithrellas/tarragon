@@ -22,7 +22,7 @@ func TestPersistentPluginE2E(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	store := newAggregateStore(10, "global")
+	store := newAggregateStore(10, "global", nil, 0.3)
 	uiReg := newUIRegistry()
 	reqOut, plugReg := startPluginListener(ctx, store, uiReg)
 
@@ -36,7 +36,7 @@ func TestPersistentPluginE2E(t *testing.T) {
 		RequirePrefix:   false,
 	}}
 
-	go startUIServer(ctx, mgr, reqOut, plugReg, store, uiReg)
+	go startUIServer(ctx, mgr, reqOut, plugReg, store, uiReg, nil)
 
 	pluginReqCh := make(chan wire.PluginRequest, 1)
 	pluginErrCh := make(chan error, 1)

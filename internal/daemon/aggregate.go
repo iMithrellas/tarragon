@@ -1,11 +1,14 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
+	"log"
 	"sort"
 	"sync"
 	"time"
 
+	"github.com/iMithrellas/tarragon/internal/db"
 	"github.com/iMithrellas/tarragon/internal/wire"
 )
 
@@ -28,21 +31,67 @@ type aggregateStore struct {
 	mu           sync.Mutex
 	limit        int
 	orderingMode string
-	order        []string
-	byID         map[string]*aggregate
-	byClient     map[string]map[string]struct{}
+	frecencyDB   *db.DB
+	frecencyW    float64
+
+	frecencyCacheMu sync.RWMutex
+	frecencyCache   map[string]float64
+
+	order    []string
+	byID     map[string]*aggregate
+	byClient map[string]map[string]struct{}
 }
 
-func newAggregateStore(limit int, orderingMode string) *aggregateStore {
+func newAggregateStore(limit int, orderingMode string, frecencyDB *db.DB, frecencyWeight float64) *aggregateStore {
 	if orderingMode == "" {
 		orderingMode = "global"
 	}
-	return &aggregateStore{
-		limit:        limit,
-		orderingMode: orderingMode,
-		byID:         make(map[string]*aggregate),
-		byClient:     make(map[string]map[string]struct{}),
+	if frecencyWeight < 0 {
+		frecencyWeight = 0
 	}
+	if frecencyWeight > 1 {
+		frecencyWeight = 1
+	}
+	s := &aggregateStore{
+		limit:         limit,
+		orderingMode:  orderingMode,
+		frecencyDB:    frecencyDB,
+		frecencyW:     frecencyWeight,
+		frecencyCache: make(map[string]float64),
+		byID:          make(map[string]*aggregate),
+		byClient:      make(map[string]map[string]struct{}),
+	}
+	if err := s.RefreshFrecencyCache(context.Background()); err != nil {
+		log.Printf("[AGG] initial frecency cache refresh failed: %v", err)
+	}
+	return s
+}
+
+// RefreshFrecencyCache reloads frecency scores from DB into memory.
+func (s *aggregateStore) RefreshFrecencyCache(ctx context.Context) error {
+	if s == nil || s.frecencyDB == nil {
+		return nil
+	}
+
+	scores, err := s.frecencyDB.GetFrecencyScores(ctx)
+	if err != nil {
+		return err
+	}
+
+	s.frecencyCacheMu.Lock()
+	s.frecencyCache = scores
+	s.frecencyCacheMu.Unlock()
+	return nil
+}
+
+func (s *aggregateStore) frecencyScoresSnapshot() map[string]float64 {
+	s.frecencyCacheMu.RLock()
+	defer s.frecencyCacheMu.RUnlock()
+	out := make(map[string]float64, len(s.frecencyCache))
+	for k, v := range s.frecencyCache {
+		out[k] = v
+	}
+	return out
 }
 
 func (s *aggregateStore) create(qid, client, input string) {
@@ -81,6 +130,8 @@ func (s *aggregateStore) create(qid, client, input string) {
 
 // update returns a snapshot JSON after applying the update.
 func (s *aggregateStore) update(qid, plugin string, elapsed float64, data json.RawMessage) ([]byte, bool) {
+	frecencyScores := s.frecencyScoresSnapshot()
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ag, ok := s.byID[qid]
@@ -88,7 +139,7 @@ func (s *aggregateStore) update(qid, plugin string, elapsed float64, data json.R
 		return nil, false
 	}
 	ag.Results[plugin] = aggResult{ElapsedMs: elapsed, Data: data}
-	ag.List = orderResults(flattenResults(ag.Results), s.orderingMode)
+	ag.List = orderResults(flattenResults(ag.Results), s.orderingMode, frecencyScores, s.frecencyW)
 	snap, _ := json.Marshal(ag)
 	return snap, true
 }
@@ -206,9 +257,16 @@ func toRawMap(m map[string]any) map[string]json.RawMessage {
 	return out
 }
 
-func orderResults(items []wire.ResultItem, mode string) []wire.ResultItem {
+func orderResults(items []wire.ResultItem, mode string, frecencyScores map[string]float64, weight float64) []wire.ResultItem {
 	if len(items) <= 1 {
+		if len(items) == 1 {
+			items[0] = applyFrecency(items[0], frecencyScores, weight)
+		}
 		return items
+	}
+
+	for i := range items {
+		items[i] = applyFrecency(items[i], frecencyScores, weight)
 	}
 
 	if mode != "grouped" {
@@ -255,6 +313,20 @@ func orderResults(items []wire.ResultItem, mode string) []wire.ResultItem {
 		ordered = append(ordered, g.items...)
 	}
 	return ordered
+}
+
+func applyFrecency(item wire.ResultItem, frecencyScores map[string]float64, weight float64) wire.ResultItem {
+	if weight < 0 {
+		weight = 0
+	}
+	if weight > 1 {
+		weight = 1
+	}
+	key := item.Plugin + ":" + item.ID
+	f := frecencyScores[key]
+	item.FrecencyScore = f
+	item.Score = (1-weight)*item.Score + weight*f
+	return item
 }
 
 func (s *aggregateStore) removeByClient(client string) int {

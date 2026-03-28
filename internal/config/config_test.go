@@ -161,6 +161,7 @@ func TestGeneratedConfigValues(t *testing.T) {
 		{"port", func() interface{} { return viper.GetString("port") }, "5555"},
 		{"tuidebounce", func() interface{} { return viper.GetInt("tuidebounce") }, 200},
 		{"max_aggregates", func() interface{} { return viper.GetInt("max_aggregates") }, 64},
+		{"frecency_weight", func() interface{} { return viper.GetFloat64("frecency_weight") }, 0.3},
 	}
 
 	for _, tt := range tests {
