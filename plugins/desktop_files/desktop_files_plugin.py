@@ -162,14 +162,13 @@ def process(text: str, cache: DesktopEntryCache) -> list[dict]:
         else:
             score = 0.6
 
-        label = name
-        if comment:
-            label = f"{name} — {comment}"
-
         scored.append(
             {
                 "id": entry.get("exec", ""),
-                "label": label,
+                "label": name,
+                "description": comment,
+                "icon": entry.get("icon", ""),
+                "category": "Applications",
                 "score": score,
                 "actions": [
                     {
