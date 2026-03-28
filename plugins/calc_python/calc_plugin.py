@@ -131,6 +131,9 @@ def process(text: str):
         {
             "id": out,
             "label": f"{text.strip()} = {out}",
+            "description": "Copy to clipboard",
+            "icon": "accessories-calculator",
+            "category": "Calculator",
             "actions": [
                 {
                     "name": "copy",

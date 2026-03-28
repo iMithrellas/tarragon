@@ -53,10 +53,14 @@ type actionItem struct {
 }
 
 type resultItem struct {
-	ID      string       `json:"id"`
-	Label   string       `json:"label"`
-	Score   float64      `json:"score"`
-	Actions []actionItem `json:"actions,omitempty"`
+	ID          string       `json:"id"`
+	Label       string       `json:"label"`
+	Description string       `json:"description,omitempty"`
+	Icon        string       `json:"icon,omitempty"`
+	Category    string       `json:"category,omitempty"`
+	PreviewPath string       `json:"preview_path,omitempty"`
+	Score       float64      `json:"score"`
+	Actions     []actionItem `json:"actions,omitempty"`
 }
 
 type selectResponse struct {
@@ -472,10 +476,18 @@ func (i *indexer) query(ctx context.Context, q string) ([]resultItem, error) {
 
 	results := make([]resultItem, 0, len(hits))
 	for _, h := range hits {
+		parent := filepath.Dir(h.Path)
+		if parent == "" {
+			parent = "/"
+		}
 		results = append(results, resultItem{
-			ID:    h.Path,
-			Label: formatLabel(h.Path, h.Filename),
-			Score: scoreFilename(h.Filename, q),
+			ID:          h.Path,
+			Label:       h.Filename,
+			Description: parent,
+			Icon:        "text-x-generic",
+			Category:    "Files",
+			PreviewPath: h.Path,
+			Score:       scoreFilename(h.Filename, q),
 			Actions: []actionItem{
 				{Name: "open", Default: true, Description: "Open file"},
 				{Name: "open_folder", Description: "Open containing folder"},
@@ -485,7 +497,7 @@ func (i *indexer) query(ctx context.Context, q string) ([]resultItem, error) {
 
 	sort.SliceStable(results, func(a, b int) bool {
 		if results[a].Score == results[b].Score {
-			return results[a].Label < results[b].Label
+			return results[a].ID < results[b].ID
 		}
 		return results[a].Score > results[b].Score
 	})
@@ -495,17 +507,6 @@ func (i *indexer) query(ctx context.Context, q string) ([]resultItem, error) {
 	}
 
 	return results, nil
-}
-
-func formatLabel(path, filename string) string {
-	parent := filepath.Dir(path)
-	if parent == "" {
-		parent = "/"
-	}
-	if !strings.HasSuffix(parent, "/") {
-		parent += "/"
-	}
-	return fmt.Sprintf("%s — %s", filename, parent)
 }
 
 func scoreFilename(filename, query string) float64 {

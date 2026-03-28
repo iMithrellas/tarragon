@@ -45,6 +45,9 @@ def process(text: str):
             {
                 "id": "websearch-hint",
                 "label": f"Type '{prefix} <query>' to search {name}",
+                "description": f"Search on {name}",
+                "icon": name.lower(),
+                "category": "Web",
                 "score": 0.3,
             }
         ]
@@ -57,6 +60,9 @@ def process(text: str):
         {
             "id": url,
             "label": f"{name}: {clean_query}",
+            "description": f"Search on {name}",
+            "icon": name.lower(),
+            "category": "Web",
             "score": 1.0,
             "actions": [
                 {
