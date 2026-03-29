@@ -16,6 +16,7 @@ import (
 	"github.com/iMithrellas/tarragon/internal/db"
 	"github.com/iMithrellas/tarragon/internal/plugins"
 	"github.com/iMithrellas/tarragon/internal/wire"
+	"github.com/spf13/viper"
 )
 
 var querySeq uint64
@@ -170,6 +171,7 @@ func handleUIClient(ctx context.Context, conn net.Conn, mgr *plugins.Manager, re
 		case "status":
 			connected := pluginsReg.Names()
 			total := 0
+			mgr.RLock()
 			pluginInfos := make([]wire.PluginInfo, 0, len(mgr.Plugins))
 			for _, p := range mgr.Plugins {
 				if p.Config.Enabled {
@@ -188,6 +190,7 @@ func handleUIClient(ctx context.Context, conn net.Conn, mgr *plugins.Manager, re
 					Icon:            p.Config.Icon,
 				})
 			}
+			mgr.RUnlock()
 			sort.Slice(pluginInfos, func(i, j int) bool {
 				return pluginInfos[i].Name < pluginInfos[j].Name
 			})
@@ -197,6 +200,56 @@ func handleUIClient(ctx context.Context, conn net.Conn, mgr *plugins.Manager, re
 				Total:     total,
 				Plugins:   pluginInfos,
 			})
+			continue
+		case "reload":
+			if err := viper.ReadInConfig(); err != nil {
+				_ = wire.WriteMsg(conn, &wire.ReloadResponse{Type: "reload_response", Success: false, Message: fmt.Sprintf("failed to read config: %v", err)})
+				continue
+			}
+
+			startPersistent := false
+			mgr.Lock()
+			beforeEnabled := make(map[string]bool, len(mgr.Plugins))
+			beforeLifecycle := make(map[string]plugins.LifecycleMode, len(mgr.Plugins))
+			for name, p := range mgr.Plugins {
+				beforeEnabled[name] = p.Config.Enabled
+				beforeLifecycle[name] = p.Config.Lifecycle
+			}
+
+			mgr.ApplyOverrides()
+
+			for name, p := range mgr.Plugins {
+				wasEnabled := beforeEnabled[name]
+				wasLifecycle := beforeLifecycle[name]
+				isEnabled := p.Config.Enabled
+				isLifecycle := p.Config.Lifecycle
+
+				if !isEnabled {
+					if p.Running() {
+						p.Stop()
+					}
+					continue
+				}
+
+				if wasLifecycle != isLifecycle && p.Running() {
+					p.Stop()
+				}
+
+				if (!wasEnabled && isEnabled && isLifecycle == plugins.LifecycleDaemon) ||
+					(wasLifecycle != isLifecycle && isLifecycle == plugins.LifecycleDaemon) {
+					startPersistent = true
+				}
+			}
+			mgr.Unlock()
+
+			if startPersistent {
+				if err := mgr.StartPersistent(ctx, wire.SocketPlugins); err != nil {
+					_ = wire.WriteMsg(conn, &wire.ReloadResponse{Type: "reload_response", Success: false, Message: fmt.Sprintf("reload applied, but failed to start daemon plugins: %v", err)})
+					continue
+				}
+			}
+
+			_ = wire.WriteMsg(conn, &wire.ReloadResponse{Type: "reload_response", Success: true, Message: "configuration reloaded"})
 			continue
 		case "query", "":
 			// handled below
@@ -231,29 +284,42 @@ func handleUIClient(ctx context.Context, conn net.Conn, mgr *plugins.Manager, re
 }
 
 func dispatchQuery(ctx context.Context, queryText, qid string, mgr *plugins.Manager, reqOut chan<- pluginRequest, pluginsReg *pluginRegistry, store *aggregateStore, ui *uiRegistry, hasTarget bool, targetName string) {
+	type pluginSnapshot struct {
+		name string
+		dir  string
+		cfg  plugins.PluginConfig
+	}
+
+	mgr.RLock()
+	snaps := make([]pluginSnapshot, 0, len(mgr.Plugins))
 	for name, p := range mgr.Plugins {
-		if !p.Config.Enabled {
+		snaps = append(snaps, pluginSnapshot{name: name, dir: p.Dir, cfg: p.Config})
+	}
+	mgr.RUnlock()
+
+	for _, snap := range snaps {
+		if !snap.cfg.Enabled {
 			continue
 		}
-		if p.Config.Lifecycle == plugins.LifecycleOnCall {
+		if snap.cfg.Lifecycle == plugins.LifecycleOnCall {
 			continue
 		}
-		if p.Config.RequirePrefix && !hasTarget {
+		if snap.cfg.RequirePrefix && !hasTarget {
 			continue
 		}
-		if hasTarget && name != targetName {
+		if hasTarget && snap.name != targetName {
 			continue
 		}
 
-		if p.Config.Lifecycle == plugins.LifecycleOnDemandPersistent && !pluginsReg.isConnected(name) {
-			if err := mgr.StartOnDemand(ctx, name, wire.SocketPlugins); err != nil {
-				log.Printf("[UI] failed to start on-demand plugin %s: %v", name, err)
+		if snap.cfg.Lifecycle == plugins.LifecycleOnDemandPersistent && !pluginsReg.isConnected(snap.name) {
+			if err := mgr.StartOnDemand(ctx, snap.name, wire.SocketPlugins); err != nil {
+				log.Printf("[UI] failed to start on-demand plugin %s: %v", snap.name, err)
 				continue
 			}
 
 			connected := false
 			for i := 0; i < 40; i++ {
-				if pluginsReg.isConnected(name) {
+				if pluginsReg.isConnected(snap.name) {
 					connected = true
 					break
 				}
@@ -261,35 +327,35 @@ func dispatchQuery(ctx context.Context, queryText, qid string, mgr *plugins.Mana
 			}
 
 			if !connected {
-				log.Printf("[UI] on-demand plugin %s did not connect within 2s; skipping query %s", name, qid)
+				log.Printf("[UI] on-demand plugin %s did not connect within 2s; skipping query %s", snap.name, qid)
 				continue
 			}
 		}
 
-		if pluginsReg.isConnected(name) {
-			reqOut <- pluginRequest{name: name, queryID: qid, text: queryText}
+		if pluginsReg.isConnected(snap.name) {
+			reqOut <- pluginRequest{name: snap.name, queryID: qid, text: queryText}
 		}
 	}
 
-	for name, p := range mgr.Plugins {
-		if !p.Config.Enabled || p.Config.Lifecycle != plugins.LifecycleOnCall {
+	for _, snap := range snaps {
+		if !snap.cfg.Enabled || snap.cfg.Lifecycle != plugins.LifecycleOnCall {
 			continue
 		}
-		if p.Config.RequirePrefix && !hasTarget {
+		if snap.cfg.RequirePrefix && !hasTarget {
 			continue
 		}
-		if hasTarget && name != targetName {
+		if hasTarget && snap.name != targetName {
 			continue
 		}
 		t0 := time.Now()
 		pctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-		raw, err := invokeOnCall(pctx, p, queryText)
+		raw, err := invokeOnCall(pctx, &plugins.Plugin{Dir: snap.dir, Config: snap.cfg}, queryText)
 		cancel()
 		if err != nil {
 			raw = json.RawMessage([]byte(fmt.Sprintf(`{"error":"%s"}`, escapeJSONString(err.Error()))))
 		}
-		if snap, ok := store.update(qid, name, float64(time.Since(t0).Microseconds())/1000.0, raw); ok {
-			ui.publish(&wire.UpdateMessage{Type: "update", QueryID: qid, Payload: snap})
+		if updateSnap, ok := store.update(qid, snap.name, float64(time.Since(t0).Microseconds())/1000.0, raw); ok {
+			ui.publish(&wire.UpdateMessage{Type: "update", QueryID: qid, Payload: updateSnap})
 		}
 	}
 }
@@ -304,6 +370,7 @@ func resolvePrefixTarget(input string, mgr *plugins.Manager) (string, string, bo
 	}
 	var targetName string
 	var targetPrefix string
+	mgr.RLock()
 	for name, p := range mgr.Plugins {
 		if !p.Config.Enabled {
 			continue
@@ -317,6 +384,7 @@ func resolvePrefixTarget(input string, mgr *plugins.Manager) (string, string, bo
 			targetPrefix = prefix
 		}
 	}
+	mgr.RUnlock()
 	if targetName == "" {
 		return "", "", false
 	}
