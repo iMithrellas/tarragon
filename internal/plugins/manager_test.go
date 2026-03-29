@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/spf13/viper"
 )
 
 func TestDiscoverLoadsPluginConfig(t *testing.T) {
@@ -54,5 +56,53 @@ func TestStartPersistentSkipsNonDaemonAndDisabled(t *testing.T) {
 	m.Plugins["disabled_daemon"] = &Plugin{Config: PluginConfig{Name: "disabled_daemon", Enabled: false, Entrypoint: "nope.sh", Lifecycle: LifecycleDaemon}}
 	if err := m.StartPersistent(context.Background(), "ipc:///tmp/test.ipc"); err != nil {
 		t.Fatalf("expected no error, got %v", err)
+	}
+}
+
+func TestApplyOverridesMergesSetValues(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	m := &Manager{Plugins: make(map[string]*Plugin)}
+	base := PluginConfig{Name: "example", Enabled: true, Prefix: "ex ", Lifecycle: LifecycleOnCall}
+	m.Plugins["example"] = &Plugin{Config: base, BaseConfig: base}
+
+	viper.Set("plugins.example.enabled", false)
+	viper.Set("plugins.example.prefix", "eg ")
+	viper.Set("plugins.example.lifecycle_mode", "daemon")
+
+	m.ApplyOverrides()
+
+	p := m.Plugins["example"]
+	if p.Config.Enabled != false {
+		t.Fatalf("expected enabled override false, got %v", p.Config.Enabled)
+	}
+	if p.Config.Prefix != "eg " {
+		t.Fatalf("expected prefix override, got %q", p.Config.Prefix)
+	}
+	if p.Config.Lifecycle != LifecycleDaemon {
+		t.Fatalf("expected lifecycle override daemon, got %q", p.Config.Lifecycle)
+	}
+}
+
+func TestApplyOverridesResetsToBaseWhenOverrideRemoved(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	m := &Manager{Plugins: make(map[string]*Plugin)}
+	base := PluginConfig{Name: "example", Enabled: true, Prefix: "ex ", Lifecycle: LifecycleOnCall}
+	m.Plugins["example"] = &Plugin{Config: base, BaseConfig: base}
+
+	viper.Set("plugins.example.prefix", "over ")
+	m.ApplyOverrides()
+	if got := m.Plugins["example"].Config.Prefix; got != "over " {
+		t.Fatalf("expected first override to apply, got %q", got)
+	}
+
+	viper.Reset() // override removed from config
+	m.ApplyOverrides()
+
+	if got := m.Plugins["example"].Config.Prefix; got != "ex " {
+		t.Fatalf("expected prefix to revert to base config, got %q", got)
 	}
 }

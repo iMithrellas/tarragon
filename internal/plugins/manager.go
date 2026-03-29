@@ -42,8 +42,9 @@ type PluginConfig struct {
 
 // Plugin represents a plugin instance loaded from disk.
 type Plugin struct {
-	Config PluginConfig
-	Dir    string
+	Config     PluginConfig
+	BaseConfig PluginConfig
+	Dir        string
 
 	cmd     *exec.Cmd
 	running atomic.Bool
@@ -118,7 +119,7 @@ func (m *Manager) Discover() error {
 			cfg.Name = ent.Name()
 		}
 
-		plugin := &Plugin{Config: cfg, Dir: filepath.Join(m.pluginDir, ent.Name())}
+		plugin := &Plugin{Config: cfg, BaseConfig: cfg, Dir: filepath.Join(m.pluginDir, ent.Name())}
 		m.Plugins[cfg.Name] = plugin
 	}
 	return nil
@@ -193,6 +194,10 @@ func (m *Manager) IsRunning(name string) bool {
 // Only fields explicitly set in Viper are overridden.
 func (m *Manager) ApplyOverrides() {
 	for name, p := range m.Plugins {
+		// Rebuild effective config from the plugin's base config so removed
+		// overrides return to defaults from plugin.toml.
+		p.Config = p.BaseConfig
+
 		enabledKey := fmt.Sprintf("plugins.%s.enabled", name)
 		if viper.IsSet(enabledKey) {
 			p.Config.Enabled = viper.GetBool(enabledKey)
