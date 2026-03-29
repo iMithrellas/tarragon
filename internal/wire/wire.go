@@ -60,11 +60,26 @@ type AckMessage struct {
 	QueryID string `json:"query_id"`
 }
 
+// PluginInfo describes a plugin's metadata and connection status for UI display.
+type PluginInfo struct {
+	Name            string   `json:"name"`
+	Description     string   `json:"description,omitempty"`
+	Enabled         bool     `json:"enabled"`
+	Connected       bool     `json:"connected"`
+	Lifecycle       string   `json:"lifecycle"`
+	Prefix          string   `json:"prefix,omitempty"`
+	RequirePrefix   bool     `json:"require_prefix,omitempty"`
+	ProvidesGeneral bool     `json:"provides_general_suggestions,omitempty"`
+	Capabilities    []string `json:"capabilities,omitempty"`
+	Icon            string   `json:"icon,omitempty"`
+}
+
 // StatusResponse carries plugin connection status to the UI.
 type StatusResponse struct {
-	Type      string   `json:"type"`      // "status"
-	Connected []string `json:"connected"` // sorted connected plugin names
-	Total     int      `json:"total"`     // total enabled plugins
+	Type      string       `json:"type"`              // "status"
+	Connected []string     `json:"connected"`         // sorted connected plugin names
+	Total     int          `json:"total"`             // total enabled plugins
+	Plugins   []PluginInfo `json:"plugins,omitempty"` // full metadata per plugin
 }
 
 // UpdateMessage is streamed from daemon to UI with aggregate snapshots.

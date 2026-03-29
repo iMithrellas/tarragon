@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -169,15 +170,32 @@ func handleUIClient(ctx context.Context, conn net.Conn, mgr *plugins.Manager, re
 		case "status":
 			connected := pluginsReg.Names()
 			total := 0
+			pluginInfos := make([]wire.PluginInfo, 0, len(mgr.Plugins))
 			for _, p := range mgr.Plugins {
 				if p.Config.Enabled {
 					total++
 				}
+				pluginInfos = append(pluginInfos, wire.PluginInfo{
+					Name:            p.Config.Name,
+					Description:     p.Config.Description,
+					Enabled:         p.Config.Enabled,
+					Connected:       pluginsReg.isConnected(p.Config.Name),
+					Lifecycle:       string(p.Config.Lifecycle),
+					Prefix:          p.Config.Prefix,
+					RequirePrefix:   p.Config.RequirePrefix,
+					ProvidesGeneral: p.Config.ProvidesGeneral,
+					Capabilities:    p.Config.Capabilities,
+					Icon:            p.Config.Icon,
+				})
 			}
+			sort.Slice(pluginInfos, func(i, j int) bool {
+				return pluginInfos[i].Name < pluginInfos[j].Name
+			})
 			_ = wire.WriteMsg(conn, &wire.StatusResponse{
 				Type:      "status",
 				Connected: connected,
 				Total:     total,
+				Plugins:   pluginInfos,
 			})
 			continue
 		case "query", "":
