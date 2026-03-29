@@ -3,14 +3,17 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/iMithrellas/tarragon/internal/config"
 	"github.com/iMithrellas/tarragon/internal/plugins"
+	"github.com/iMithrellas/tarragon/internal/wire"
 	"github.com/spf13/cobra"
 )
 
@@ -67,6 +70,13 @@ var pluginConfigCmd = &cobra.Command{
 				return err
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Reset overrides for plugin %q\n", name)
+			if ok, msg, err := sendReload(); err != nil {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not notify daemon: %v\n", err)
+			} else if !ok {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: daemon reload failed: %s\n", msg)
+			} else {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Daemon reloaded successfully\n")
+			}
 			return nil
 		}
 
@@ -100,8 +110,40 @@ var pluginConfigCmd = &cobra.Command{
 		}
 
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Updated overrides for plugin %q\n", name)
+		if ok, msg, err := sendReload(); err != nil {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not notify daemon: %v\n", err)
+		} else if !ok {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: daemon reload failed: %s\n", msg)
+		} else {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Daemon reloaded successfully\n")
+		}
 		return nil
 	},
+}
+
+func sendReload() (bool, string, error) {
+	conn, err := net.DialTimeout("unix", wire.SocketUI, 2*time.Second)
+	if err != nil {
+		return false, "", err
+	}
+	defer func() {
+		_ = conn.Close()
+	}()
+
+	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
+
+	req := wire.UIRequest{Type: "reload", ClientID: "cli"}
+	if err := wire.WriteMsg(conn, req); err != nil {
+		return false, "", err
+	}
+
+	scanner := wire.NewScanner(conn)
+	var resp wire.ReloadResponse
+	if err := wire.ReadMsg(scanner, &resp); err != nil {
+		return false, "", err
+	}
+
+	return resp.Success, resp.Message, nil
 }
 
 func init() {
