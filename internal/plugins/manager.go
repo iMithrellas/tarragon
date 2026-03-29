@@ -42,19 +42,38 @@ type PluginConfig struct {
 
 // Plugin represents a plugin instance loaded from disk.
 type Plugin struct {
-	Config PluginConfig
-	Dir    string
+	Config     PluginConfig
+	BaseConfig PluginConfig
+	Dir        string
 
 	cmd     *exec.Cmd
 	running atomic.Bool
 }
 
+// Running reports whether the plugin process is currently running.
+func (p *Plugin) Running() bool { return p.running.Load() }
+
+// Stop terminates the plugin process if running.
+func (p *Plugin) Stop() { p.stop() }
+
 // Manager oversees all plugins.
 type Manager struct {
 	Plugins   map[string]*Plugin
 	pluginDir string
-	mu        sync.Mutex
+	mu        sync.RWMutex
 }
+
+// Lock acquires the manager write lock.
+func (m *Manager) Lock() { m.mu.Lock() }
+
+// Unlock releases the manager write lock.
+func (m *Manager) Unlock() { m.mu.Unlock() }
+
+// RLock acquires the manager read lock.
+func (m *Manager) RLock() { m.mu.RLock() }
+
+// RUnlock releases the manager read lock.
+func (m *Manager) RUnlock() { m.mu.RUnlock() }
 
 // DefaultDir returns the default plugin directory.
 func DefaultDir() string {
@@ -100,7 +119,7 @@ func (m *Manager) Discover() error {
 			cfg.Name = ent.Name()
 		}
 
-		plugin := &Plugin{Config: cfg, Dir: filepath.Join(m.pluginDir, ent.Name())}
+		plugin := &Plugin{Config: cfg, BaseConfig: cfg, Dir: filepath.Join(m.pluginDir, ent.Name())}
 		m.Plugins[cfg.Name] = plugin
 	}
 	return nil
@@ -199,14 +218,50 @@ func (m *Manager) StartOnDemand(ctx context.Context, name string, ipcEndpoint st
 
 // IsRunning reports whether the named plugin is running.
 func (m *Manager) IsRunning(name string) bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
 	p, ok := m.Plugins[name]
 	if !ok {
 		return false
 	}
 	return p.running.Load()
+}
+
+// ApplyOverrides merges config overrides from Viper over discovered plugin config.
+// Supported keys are:
+//   - plugins.<name>.enabled
+//   - plugins.<name>.prefix
+//   - plugins.<name>.lifecycle_mode
+//
+// Only fields explicitly set in Viper are overridden.
+func (m *Manager) ApplyOverrides() {
+	for name, p := range m.Plugins {
+		// Rebuild effective config from the plugin's base config so removed
+		// overrides return to defaults from plugin.toml.
+		p.Config = p.BaseConfig
+
+		enabledKey := fmt.Sprintf("plugins.%s.enabled", name)
+		if viper.IsSet(enabledKey) {
+			p.Config.Enabled = viper.GetBool(enabledKey)
+		}
+
+		prefixKey := fmt.Sprintf("plugins.%s.prefix", name)
+		if viper.IsSet(prefixKey) {
+			p.Config.Prefix = viper.GetString(prefixKey)
+		}
+
+		lifecycleKey := fmt.Sprintf("plugins.%s.lifecycle_mode", name)
+		if viper.IsSet(lifecycleKey) {
+			lifecycle := LifecycleMode(viper.GetString(lifecycleKey))
+			switch lifecycle {
+			case LifecycleDaemon, LifecycleOnDemandPersistent, LifecycleOnCall:
+				p.Config.Lifecycle = lifecycle
+			default:
+				log.Printf("invalid lifecycle_mode override for plugin %s: %q", name, lifecycle)
+			}
+		}
+	}
 }
 
 func (p *Plugin) start(ctx context.Context, ipcEndpoint string) error {

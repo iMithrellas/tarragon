@@ -82,6 +82,13 @@ type StatusResponse struct {
 	Plugins   []PluginInfo `json:"plugins,omitempty"` // full metadata per plugin
 }
 
+// ReloadResponse is sent from daemon to UI after reload request handling.
+type ReloadResponse struct {
+	Type    string `json:"type"`
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
 // UpdateMessage is streamed from daemon to UI with aggregate snapshots.
 type UpdateMessage struct {
 	Type    string `json:"type"` // "update"
