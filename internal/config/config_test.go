@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spf13/pflag"
@@ -238,5 +239,110 @@ func TestFindConfigFileNotFound(t *testing.T) {
 	_, err := FindConfigFile(configDir)
 	if err == nil {
 		t.Error("Expected error when no config file exists")
+	}
+}
+
+func TestWritePluginOverridePreservesCommentsAndUpdatesSection(t *testing.T) {
+	resetFlags()
+	defer resetFlags()
+
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, "tarragon")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+
+	cfgPath := filepath.Join(configDir, "tarragon.toml")
+	content := strings.Join([]string{
+		"# top comment",
+		"run_tcp = false",
+		"",
+		"[plugins.calculator]",
+		"enabled = true",
+		"prefix = \"@calc\"",
+		"",
+		"[plugins.other]",
+		"enabled = true",
+		"",
+	}, "\n")
+	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	if err := LoadConfig(configDir); err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	if err := WritePluginOverride("calculator", map[string]any{
+		"enabled":        false,
+		"prefix":         "=",
+		"lifecycle_mode": "on_call",
+	}); err != nil {
+		t.Fatalf("WritePluginOverride: %v", err)
+	}
+
+	updated, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("read updated config: %v", err)
+	}
+	txt := string(updated)
+	if !strings.Contains(txt, "# top comment") {
+		t.Fatalf("expected original comment to be preserved, got:\n%s", txt)
+	}
+	if !strings.Contains(txt, "[plugins.calculator]") ||
+		!strings.Contains(txt, "enabled = false") ||
+		!strings.Contains(txt, "prefix = \"=\"") ||
+		!strings.Contains(txt, "lifecycle_mode = \"on_call\"") {
+		t.Fatalf("expected calculator overrides section to be updated, got:\n%s", txt)
+	}
+	if !strings.Contains(txt, "[plugins.other]") {
+		t.Fatalf("expected unrelated plugin section to remain, got:\n%s", txt)
+	}
+}
+
+func TestResetPluginOverrideRemovesSection(t *testing.T) {
+	resetFlags()
+	defer resetFlags()
+
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, "tarragon")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+
+	cfgPath := filepath.Join(configDir, "tarragon.toml")
+	content := strings.Join([]string{
+		"run_tcp = false",
+		"",
+		"[plugins.calculator]",
+		"enabled = false",
+		"prefix = \"=\"",
+		"",
+		"[plugins.other]",
+		"enabled = true",
+		"",
+	}, "\n")
+	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	if err := LoadConfig(configDir); err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	if err := ResetPluginOverride("calculator"); err != nil {
+		t.Fatalf("ResetPluginOverride: %v", err)
+	}
+
+	updated, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("read updated config: %v", err)
+	}
+	txt := string(updated)
+	if strings.Contains(txt, "[plugins.calculator]") {
+		t.Fatalf("expected calculator section removed, got:\n%s", txt)
+	}
+	if !strings.Contains(txt, "[plugins.other]") {
+		t.Fatalf("expected other section to remain, got:\n%s", txt)
 	}
 }

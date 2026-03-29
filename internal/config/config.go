@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/iMithrellas/tarragon/internal/db"
@@ -302,4 +303,170 @@ func formatYAMLValue(key string, value interface{}) string {
 
 func formatINIValue(key string, value interface{}) string {
 	return fmt.Sprintf("%s = %v", key, value)
+}
+
+// WritePluginOverride updates [plugins.<name>] keys and writes config while
+// preserving comments by editing the TOML text directly.
+func WritePluginOverride(name string, overrides map[string]any) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("plugin name is required")
+	}
+	if len(overrides) == 0 {
+		return fmt.Errorf("at least one override is required")
+	}
+
+	baseKey := fmt.Sprintf("plugins.%s", name)
+	for k, v := range overrides {
+		viper.Set(baseKey+"."+k, v)
+	}
+
+	sectionValues := viper.GetStringMap(baseKey)
+	if len(sectionValues) == 0 {
+		return fmt.Errorf("no plugin override values found for %q", name)
+	}
+
+	section := buildPluginSection(name, sectionValues)
+	if err := updatePluginSectionInConfig(name, section, false); err != nil {
+		return err
+	}
+
+	if err := viper.ReadInConfig(); err != nil {
+		return fmt.Errorf("sync config after write: %w", err)
+	}
+
+	return nil
+}
+
+// ResetPluginOverride removes [plugins.<name>] and writes config while
+// preserving comments by editing the TOML text directly.
+func ResetPluginOverride(name string) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("plugin name is required")
+	}
+
+	viper.Set(fmt.Sprintf("plugins.%s", name), nil)
+	if err := updatePluginSectionInConfig(name, "", true); err != nil {
+		return err
+	}
+
+	if err := viper.ReadInConfig(); err != nil {
+		return fmt.Errorf("sync config after write: %w", err)
+	}
+
+	return nil
+}
+
+func buildPluginSection(name string, values map[string]any) string {
+	var sb strings.Builder
+	_, _ = fmt.Fprintf(&sb, "[plugins.%s]\n", name)
+
+	preferred := []string{"enabled", "prefix", "lifecycle_mode"}
+	written := make(map[string]bool, len(values))
+
+	for _, key := range preferred {
+		if val, ok := values[key]; ok {
+			sb.WriteString(formatPluginOverrideValue(key, val))
+			sb.WriteByte('\n')
+			written[key] = true
+		}
+	}
+
+	var remaining []string
+	for key := range values {
+		if written[key] {
+			continue
+		}
+		remaining = append(remaining, key)
+	}
+	sort.Strings(remaining)
+	for _, key := range remaining {
+		sb.WriteString(formatPluginOverrideValue(key, values[key]))
+		sb.WriteByte('\n')
+	}
+
+	return sb.String()
+}
+
+func formatPluginOverrideValue(key string, value any) string {
+	switch v := value.(type) {
+	case string:
+		escaped := strings.ReplaceAll(v, "\\", "\\\\")
+		escaped = strings.ReplaceAll(escaped, "\"", "\\\"")
+		return fmt.Sprintf("%s = \"%s\"", key, escaped)
+	case bool:
+		return fmt.Sprintf("%s = %t", key, v)
+	default:
+		return fmt.Sprintf("%s = \"%v\"", key, v)
+	}
+}
+
+func updatePluginSectionInConfig(name, section string, remove bool) error {
+	path := viper.ConfigFileUsed()
+	if path == "" {
+		return fmt.Errorf("config file path is not set")
+	}
+	if strings.ToLower(filepath.Ext(path)) != ".toml" {
+		return fmt.Errorf("plugin overrides require TOML config, got %s", path)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read config file: %w", err)
+	}
+
+	updated := replacePluginSectionText(string(data), name, section, remove)
+	if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
+		return fmt.Errorf("write config file: %w", err)
+	}
+
+	return nil
+}
+
+func replacePluginSectionText(content, name, section string, remove bool) string {
+	targetHeader := fmt.Sprintf("[plugins.%s]", name)
+	lines := strings.Split(content, "\n")
+
+	start := -1
+	for i, line := range lines {
+		if strings.TrimSpace(line) == targetHeader {
+			start = i
+			break
+		}
+	}
+
+	end := len(lines)
+	if start >= 0 {
+		for i := start + 1; i < len(lines); i++ {
+			trimmed := strings.TrimSpace(lines[i])
+			if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+				end = i
+				break
+			}
+		}
+	}
+
+	if remove {
+		if start < 0 {
+			return content
+		}
+		result := append([]string{}, lines[:start]...)
+		result = append(result, lines[end:]...)
+		return strings.TrimRight(strings.Join(result, "\n"), "\n") + "\n"
+	}
+
+	sectionLines := strings.Split(strings.TrimRight(section, "\n"), "\n")
+
+	if start >= 0 {
+		result := append([]string{}, lines[:start]...)
+		result = append(result, sectionLines...)
+		result = append(result, lines[end:]...)
+		return strings.TrimRight(strings.Join(result, "\n"), "\n") + "\n"
+	}
+
+	trimmed := strings.TrimRight(content, "\n")
+	if trimmed == "" {
+		return strings.Join(sectionLines, "\n") + "\n"
+	}
+
+	return trimmed + "\n\n" + strings.Join(sectionLines, "\n") + "\n"
 }

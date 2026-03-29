@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 
 	"github.com/pelletier/go-toml/v2"
+	"github.com/spf13/viper"
 )
 
 // LifecycleMode represents how a plugin should be executed.
@@ -103,6 +104,49 @@ func (m *Manager) Discover() error {
 		m.Plugins[cfg.Name] = plugin
 	}
 	return nil
+}
+
+// ApplyOverrides merges [plugins.<name>] config overrides from Viper on top of
+// discovered plugin.toml defaults.
+//
+// Supported override keys:
+//   - enabled (bool)
+//   - prefix (string)
+//   - lifecycle_mode (daemon | on_demand_persistent | on_call)
+func (m *Manager) ApplyOverrides() error {
+	for name, p := range m.Plugins {
+		baseKey := fmt.Sprintf("plugins.%s", name)
+
+		if viper.IsSet(baseKey + ".enabled") {
+			p.Config.Enabled = viper.GetBool(baseKey + ".enabled")
+		}
+
+		if viper.IsSet(baseKey + ".prefix") {
+			p.Config.Prefix = viper.GetString(baseKey + ".prefix")
+		}
+
+		if viper.IsSet(baseKey + ".lifecycle_mode") {
+			raw := viper.GetString(baseKey + ".lifecycle_mode")
+			mode, err := ParseLifecycleMode(raw)
+			if err != nil {
+				return fmt.Errorf("invalid lifecycle override for plugin %q: %w", name, err)
+			}
+			p.Config.Lifecycle = mode
+		}
+	}
+
+	return nil
+}
+
+// ParseLifecycleMode validates and converts lifecycle mode string.
+func ParseLifecycleMode(raw string) (LifecycleMode, error) {
+	mode := LifecycleMode(raw)
+	switch mode {
+	case LifecycleDaemon, LifecycleOnDemandPersistent, LifecycleOnCall:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("must be one of %q, %q, %q", LifecycleDaemon, LifecycleOnDemandPersistent, LifecycleOnCall)
+	}
 }
 
 // StartPersistent starts all daemon lifecycle plugins.

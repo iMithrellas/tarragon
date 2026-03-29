@@ -160,6 +160,7 @@ func init() {
 	rootCmd.AddCommand(installPluginCmd)
 	rootCmd.AddCommand(uninstallPluginCmd)
 	rootCmd.AddCommand(listPluginsCmd)
+	rootCmd.AddCommand(pluginConfigCmd)
 }
 
 func Execute() {

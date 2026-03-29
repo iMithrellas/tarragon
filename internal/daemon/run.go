@@ -24,6 +24,9 @@ func RunDaemon() {
 	if err := mgr.Discover(); err != nil {
 		log.Printf("Plugin discovery error: %v", err)
 	}
+	if err := mgr.ApplyOverrides(); err != nil {
+		log.Printf("Plugin override error: %v", err)
+	}
 	defer mgr.StopAll()
 
 	sigs := make(chan os.Signal, 1)

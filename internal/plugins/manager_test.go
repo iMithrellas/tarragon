@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/spf13/viper"
 )
 
 func TestDiscoverLoadsPluginConfig(t *testing.T) {
@@ -54,5 +56,63 @@ func TestStartPersistentSkipsNonDaemonAndDisabled(t *testing.T) {
 	m.Plugins["disabled_daemon"] = &Plugin{Config: PluginConfig{Name: "disabled_daemon", Enabled: false, Entrypoint: "nope.sh", Lifecycle: LifecycleDaemon}}
 	if err := m.StartPersistent(context.Background(), "ipc:///tmp/test.ipc"); err != nil {
 		t.Fatalf("expected no error, got %v", err)
+	}
+}
+
+func TestApplyOverridesMergesAllowedFields(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	root := t.TempDir()
+	plugDir := filepath.Join(root, "calculator")
+	if err := os.MkdirAll(plugDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	toml := []byte("" +
+		"name=\"calculator\"\n" +
+		"description=\"demo\"\n" +
+		"enabled=true\n" +
+		"entrypoint=\"run.sh\"\n" +
+		"lifecycle_mode=\"on_call\"\n" +
+		"prefix=\"@calc\"\n")
+	if err := os.WriteFile(filepath.Join(plugDir, "plugin.toml"), toml, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	viper.Set("plugins.calculator.enabled", false)
+	viper.Set("plugins.calculator.prefix", "=")
+	viper.Set("plugins.calculator.lifecycle_mode", "daemon")
+
+	m := NewManager(root)
+	if err := m.Discover(); err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	if err := m.ApplyOverrides(); err != nil {
+		t.Fatalf("apply overrides: %v", err)
+	}
+
+	p := m.Plugins["calculator"]
+	if p.Config.Enabled != false {
+		t.Fatalf("expected enabled=false, got %t", p.Config.Enabled)
+	}
+	if p.Config.Prefix != "=" {
+		t.Fatalf("expected prefix '=', got %q", p.Config.Prefix)
+	}
+	if p.Config.Lifecycle != LifecycleDaemon {
+		t.Fatalf("expected lifecycle=%s, got %s", LifecycleDaemon, p.Config.Lifecycle)
+	}
+}
+
+func TestApplyOverridesInvalidLifecycleFails(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	m := &Manager{Plugins: map[string]*Plugin{
+		"example": {Config: PluginConfig{Name: "example", Lifecycle: LifecycleOnCall}},
+	}}
+	viper.Set("plugins.example.lifecycle_mode", "bad")
+
+	if err := m.ApplyOverrides(); err == nil {
+		t.Fatal("expected invalid lifecycle override error")
 	}
 }
