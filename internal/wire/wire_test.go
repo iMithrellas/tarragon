@@ -76,8 +76,12 @@ func TestWriteReadMsgRoundTrip(t *testing.T) {
 func TestCleanupSocketRemovesFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "x.sock")
-	if err := os.WriteFile(path, []byte("stale"), 0o644); err != nil {
-		t.Fatalf("write stale: %v", err)
+	ln, err := ListenUnix(path)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	if err := ln.Close(); err != nil {
+		t.Fatalf("close listener: %v", err)
 	}
 	if err := CleanupSocket(path); err != nil {
 		t.Fatalf("cleanup: %v", err)

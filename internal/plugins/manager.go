@@ -134,6 +134,9 @@ func (m *Manager) Discover() error {
 //   - lifecycle_mode (daemon | on_demand_persistent | on_call)
 func (m *Manager) ApplyOverrides() error {
 	for name, p := range m.Plugins {
+		// Reset to defaults from plugin.toml so removed overrides take effect.
+		p.Config = p.BaseConfig
+
 		baseKey := fmt.Sprintf("plugins.%s", name)
 
 		if viper.IsSet(baseKey + ".enabled") {
@@ -226,42 +229,6 @@ func (m *Manager) IsRunning(name string) bool {
 		return false
 	}
 	return p.running.Load()
-}
-
-// ApplyOverrides merges config overrides from Viper over discovered plugin config.
-// Supported keys are:
-//   - plugins.<name>.enabled
-//   - plugins.<name>.prefix
-//   - plugins.<name>.lifecycle_mode
-//
-// Only fields explicitly set in Viper are overridden.
-func (m *Manager) ApplyOverrides() {
-	for name, p := range m.Plugins {
-		// Rebuild effective config from the plugin's base config so removed
-		// overrides return to defaults from plugin.toml.
-		p.Config = p.BaseConfig
-
-		enabledKey := fmt.Sprintf("plugins.%s.enabled", name)
-		if viper.IsSet(enabledKey) {
-			p.Config.Enabled = viper.GetBool(enabledKey)
-		}
-
-		prefixKey := fmt.Sprintf("plugins.%s.prefix", name)
-		if viper.IsSet(prefixKey) {
-			p.Config.Prefix = viper.GetString(prefixKey)
-		}
-
-		lifecycleKey := fmt.Sprintf("plugins.%s.lifecycle_mode", name)
-		if viper.IsSet(lifecycleKey) {
-			lifecycle := LifecycleMode(viper.GetString(lifecycleKey))
-			switch lifecycle {
-			case LifecycleDaemon, LifecycleOnDemandPersistent, LifecycleOnCall:
-				p.Config.Lifecycle = lifecycle
-			default:
-				log.Printf("invalid lifecycle_mode override for plugin %s: %q", name, lifecycle)
-			}
-		}
-	}
 }
 
 func (p *Plugin) start(ctx context.Context, ipcEndpoint string) error {

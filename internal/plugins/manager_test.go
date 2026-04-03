@@ -71,7 +71,9 @@ func TestApplyOverridesMergesSetValues(t *testing.T) {
 	viper.Set("plugins.example.prefix", "eg ")
 	viper.Set("plugins.example.lifecycle_mode", "daemon")
 
-	m.ApplyOverrides()
+	if err := m.ApplyOverrides(); err != nil {
+		t.Fatalf("ApplyOverrides: %v", err)
+	}
 
 	p := m.Plugins["example"]
 	if p.Config.Enabled != false {
@@ -94,13 +96,17 @@ func TestApplyOverridesResetsToBaseWhenOverrideRemoved(t *testing.T) {
 	m.Plugins["example"] = &Plugin{Config: base, BaseConfig: base}
 
 	viper.Set("plugins.example.prefix", "over ")
-	m.ApplyOverrides()
+	if err := m.ApplyOverrides(); err != nil {
+		t.Fatalf("ApplyOverrides: %v", err)
+	}
 	if got := m.Plugins["example"].Config.Prefix; got != "over " {
 		t.Fatalf("expected first override to apply, got %q", got)
 	}
 
-	viper.Reset() // override removed from config
-	m.ApplyOverrides()
+	viper.Reset()
+	if err := m.ApplyOverrides(); err != nil {
+		t.Fatalf("ApplyOverrides: %v", err)
+	}
 
 	if got := m.Plugins["example"].Config.Prefix; got != "ex " {
 		t.Fatalf("expected prefix to revert to base config, got %q", got)

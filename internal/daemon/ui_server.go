@@ -68,7 +68,7 @@ func (r *uiRegistry) remove(id string) {
 	}
 }
 
-func (r *uiRegistry) publish(msg *wire.UpdateMessage) {
+func (r *uiRegistry) publish(msg any) {
 	r.mu.RLock()
 	clients := make([]*uiClient, 0, len(r.clients))
 	ids := make([]string, 0, len(r.clients))
@@ -216,7 +216,15 @@ func handleUIClient(ctx context.Context, conn net.Conn, mgr *plugins.Manager, re
 				beforeLifecycle[name] = p.Config.Lifecycle
 			}
 
-			mgr.ApplyOverrides()
+			if err := mgr.ApplyOverrides(); err != nil {
+				mgr.Unlock()
+				_ = wire.WriteMsg(conn, &wire.ReloadResponse{
+					Type:    "reload_response",
+					Success: false,
+					Message: fmt.Sprintf("failed to apply config overrides: %v", err),
+				})
+				continue
+			}
 
 			for name, p := range mgr.Plugins {
 				wasEnabled := beforeEnabled[name]
