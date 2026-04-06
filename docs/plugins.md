@@ -10,7 +10,12 @@ Plugins declare a lifecycle in `plugin.toml`, and Tarragon runs them according t
 
 ## Directory Layout and Install
 
-Plugins are installed under `~/.local/lib/tarragon/plugins/<plugin_name>/` and discovered by the daemon at startup.
+Plugins are managed under `~/.local/lib/tarragon/plugins/<plugin_name>/` and loaded by the daemon at startup.
+
+There are two supported plugin sources:
+
+1. **Local plugin directory** (installed with `tarragon plugin install`): `entrypoint` is typically a path relative to the plugin directory.
+2. **System plugin** (enabled with `tarragon plugin enable <name>`): Tarragon resolves the binary with `which <name>`, runs `<binary> tarragon manifest`, rewrites a relative `entrypoint` to the resolved absolute binary path, appends `source = "system"`, and stores the resulting manifest in Tarragon's plugin directory.
 
 - Required files:
   - `plugin.toml` (configuration)
@@ -37,7 +42,7 @@ capabilities = ["suggest"]
 name = "Calculator"
 description = "Evaluate basic math expressions"
 enabled = true
-entrypoint = "calc_plugin_executable"  # Path to the executable/script relative to plugin dir
+entrypoint = "calc_plugin_executable"  # Relative for local plugins; may be absolute for system-enabled plugins
 lifecycle_mode = "on_demand_persistent"  # Options: "daemon", "on_demand_persistent", "on_call"
 provides_general_suggestions = true  # Responds to input without a prefix?
 prefix = "@calc"  # Optional: Prefix to force this plugin
@@ -50,6 +55,10 @@ Lifecycle modes:
 - `daemon`: started by the daemon at startup and kept running.
 - `on_demand_persistent`: started when a matching query needs the plugin and kept running afterward.
 - `on_call`: executed per request via `--once` and expected to print one JSON payload to stdout.
+
+Entrypoint path rules:
+- Relative `entrypoint`: resolved from the plugin directory (`~/.local/lib/tarragon/plugins/<name>/...`).
+- Absolute `entrypoint`: executed directly as-is (used by system-enabled plugins).
 
 ## Unix Domain Socket + NDJSON Protocol
 

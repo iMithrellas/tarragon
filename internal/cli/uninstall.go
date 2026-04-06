@@ -12,7 +12,7 @@ import (
 )
 
 var uninstallPluginCmd = &cobra.Command{
-	Use:   "uninstall-plugin <name>",
+	Use:   "uninstall <name>",
 	Short: "Uninstall a plugin by name",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {

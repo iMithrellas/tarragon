@@ -36,7 +36,7 @@ type pluginConfigRow struct {
 }
 
 var pluginConfigCmd = &cobra.Command{
-	Use:   "plugin-config [plugin-name]",
+	Use:   "config [plugin-name]",
 	Short: "View or override plugin configuration",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {

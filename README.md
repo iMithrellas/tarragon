@@ -30,7 +30,7 @@ Plugins can be invoked directly or contextually, and can expose commands, values
 ### Application Launcher
 - Parses `.desktop` files to find and launch installed applications.
 - Fuzzy search with user-configurable scoring.
-- Frecency-based sorting (frequency × recency).
+- Frecency-based sorting (frequency x recency).
 - Optional icon display (depending on UI backend).
 
 ### Plugin System
@@ -46,9 +46,15 @@ Plugins can be invoked directly or contextually, and can expose commands, values
 
 ### Plugin Installation & Security
 - **Location**: Plugins reside in `~/.local/lib/tarragon/plugins/`.
+- **Install Sources**:
+    - `tarragon plugin install <git-url>` for local plugin directories managed by plugin Makefiles.
+    - `tarragon plugin enable <name>` for system binaries exposing `tarragon manifest`.
 - **Build Standard**: Plugins requiring compilation must include a `Makefile` providing standardized targets:
     - `make check-deps`: Verifies necessary build tools are present. The launcher can use this to inform the user about requirements.
     - `make install`: Builds the plugin and places artifacts correctly.
+- **Entrypoint Resolution**:
+    - Relative `entrypoint` values are resolved from the plugin directory.
+    - Absolute `entrypoint` values are executed directly (used by system-enabled plugins).
 - **User Responsibility**: Users should inspect the `Makefile` of third-party plugins before installation to understand the build process. The launcher may facilitate checking dependencies but relies on the user to vet plugin sources.
 
 ---
@@ -127,7 +133,7 @@ graph TD
   end
  subgraph PluginInstall["Plugin Installation Process"]
         GitRepo["Git Repository"]
-        InstallCommand["tarragon install-plugin URL"]
+        InstallCommand["tarragon plugin install URL"]
         DepCheck["make check-deps"]
         MakeInstall["make install"]
         PluginDir["~/.local/lib/tarragon/plugins/"]

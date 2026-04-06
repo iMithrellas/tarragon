@@ -112,3 +112,21 @@ func TestApplyOverridesResetsToBaseWhenOverrideRemoved(t *testing.T) {
 		t.Fatalf("expected prefix to revert to base config, got %q", got)
 	}
 }
+
+func TestResolveEntrypoint(t *testing.T) {
+	t.Run("relative", func(t *testing.T) {
+		got := ResolveEntrypoint("/tmp/plugin", "run.sh")
+		want := filepath.Join("/tmp/plugin", "run.sh")
+		if got != want {
+			t.Fatalf("ResolveEntrypoint()=%q want %q", got, want)
+		}
+	})
+
+	t.Run("absolute", func(t *testing.T) {
+		const absolute = "/usr/bin/my-plugin"
+		got := ResolveEntrypoint("/tmp/plugin", absolute)
+		if got != absolute {
+			t.Fatalf("ResolveEntrypoint()=%q want %q", got, absolute)
+		}
+	})
+}

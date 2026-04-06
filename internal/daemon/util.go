@@ -6,14 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
-	"path/filepath"
 
 	"github.com/iMithrellas/tarragon/internal/plugins"
 )
 
 // invokeOnCall runs a plugin entrypoint once with the given query and returns its JSON output.
 func invokeOnCall(ctx context.Context, p *plugins.Plugin, query string) (json.RawMessage, error) {
-	entry := filepath.Join(p.Dir, p.Config.Entrypoint)
+	entry := plugins.ResolveEntrypoint(p.Dir, p.Config.Entrypoint)
 	cmd := exec.CommandContext(ctx, entry, "--once", query)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

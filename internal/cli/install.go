@@ -13,7 +13,7 @@ import (
 )
 
 var installPluginCmd = &cobra.Command{
-	Use:   "install-plugin <git-url>",
+	Use:   "install <git-url>",
 	Short: "Install a plugin from a git repository",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {

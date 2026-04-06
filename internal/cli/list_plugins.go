@@ -13,7 +13,7 @@ import (
 )
 
 var listPluginsCmd = &cobra.Command{
-	Use:   "list-plugins",
+	Use:   "list",
 	Short: "List installed plugins",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		pluginRoot := plugins.DefaultDir()

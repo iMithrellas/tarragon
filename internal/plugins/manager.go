@@ -238,7 +238,7 @@ func (p *Plugin) start(ctx context.Context, ipcEndpoint string) error {
 	if p.Config.Entrypoint == "" {
 		return errors.New("missing entrypoint")
 	}
-	entry := filepath.Join(p.Dir, p.Config.Entrypoint)
+	entry := ResolveEntrypoint(p.Dir, p.Config.Entrypoint)
 	cmd := exec.CommandContext(ctx, entry)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -283,4 +283,15 @@ func (p *Plugin) stop() {
 		log.Printf("error killing plugin %s: %v", p.Config.Name, err)
 	}
 	p.running.Store(false)
+}
+
+// ResolveEntrypoint returns an absolute executable path for a plugin entrypoint.
+//
+// Relative entrypoints are resolved against the plugin directory; absolute
+// entrypoints are returned as-is.
+func ResolveEntrypoint(pluginDir, entrypoint string) string {
+	if filepath.IsAbs(entrypoint) {
+		return entrypoint
+	}
+	return filepath.Join(pluginDir, entrypoint)
 }

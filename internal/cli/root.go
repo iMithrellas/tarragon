@@ -93,6 +93,11 @@ var configCmd = &cobra.Command{
 	Short: "Configuration utilities",
 }
 
+var pluginCmd = &cobra.Command{
+	Use:   "plugin",
+	Short: "Plugin management commands",
+}
+
 var configGenCmd = &cobra.Command{
 	Use:   "generate",
 	Short: "Generate a configuration file",
@@ -157,10 +162,12 @@ func init() {
 	configCmd.AddCommand(configGenCmd)
 
 	// Register plugin management commands
-	rootCmd.AddCommand(installPluginCmd)
-	rootCmd.AddCommand(uninstallPluginCmd)
-	rootCmd.AddCommand(listPluginsCmd)
-	rootCmd.AddCommand(pluginConfigCmd)
+	rootCmd.AddCommand(pluginCmd)
+	pluginCmd.AddCommand(installPluginCmd)
+	pluginCmd.AddCommand(enablePluginCmd)
+	pluginCmd.AddCommand(uninstallPluginCmd)
+	pluginCmd.AddCommand(listPluginsCmd)
+	pluginCmd.AddCommand(pluginConfigCmd)
 }
 
 func Execute() {

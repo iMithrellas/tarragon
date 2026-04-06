@@ -45,3 +45,16 @@ func TestInvokeOnCall_Timeout(t *testing.T) {
 		t.Fatalf("expected timeout error")
 	}
 }
+
+func TestInvokeOnCall_AbsoluteEntrypoint(t *testing.T) {
+	d := t.TempDir()
+	entry := writeScript(t, d, "plug-abs.sh", "#!/usr/bin/env bash\nif [[ \"$1\" == \"--once\" ]]; then echo '{\"ok\":true,\"data\":\"abs\"}'; fi\n")
+	p := &plugins.Plugin{Dir: d, Config: plugins.PluginConfig{Name: "t", Entrypoint: entry, Enabled: true}}
+	out, err := invokeOnCall(context.Background(), p, "ignored")
+	if err != nil {
+		t.Fatalf("invoke error: %v", err)
+	}
+	if string(out) != `{"ok":true,"data":"abs"}` {
+		t.Fatalf("unexpected output: %s", string(out))
+	}
+}
