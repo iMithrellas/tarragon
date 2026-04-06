@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -46,9 +47,11 @@ const (
 
 type ackMsg struct{ queryID string }
 type updateMsg struct {
-	queryID string
-	rows    []wire.ResultItem
-	results map[string]tuiAggResult
+	queryID         string
+	startedAtUnixMs int64
+	rows            []wire.ResultItem
+	results         map[string]tuiAggResult
+	plugins         map[string]tuiPluginState
 }
 type errMsg struct{ err error }
 type debounceTickMsg struct{ seq int }
@@ -75,12 +78,21 @@ type tuiAggResult struct {
 	Data      json.RawMessage `json:"data"`
 }
 
+type tuiPluginState struct {
+	State     string  `json:"state"`
+	Count     int     `json:"count,omitempty"`
+	ElapsedMs float64 `json:"elapsed_ms,omitempty"`
+	Error     string  `json:"error,omitempty"`
+}
+
 // tuiAggView is the payload structure from daemon UpdateMessage for the TUI.
 type tuiAggView struct {
-	QueryID string                  `json:"query_id"`
-	Input   string                  `json:"input"`
-	Results map[string]tuiAggResult `json:"results"`
-	List    []wire.ResultItem       `json:"list"`
+	QueryID         string                    `json:"query_id"`
+	Input           string                    `json:"input"`
+	StartedAtUnixMs int64                     `json:"started_at_unix_ms"`
+	Results         map[string]tuiAggResult   `json:"results"`
+	Plugins         map[string]tuiPluginState `json:"plugins"`
+	List            []wire.ResultItem         `json:"list"`
 }
 
 // choice represents a selectable suggestion from a plugin.
@@ -181,9 +193,11 @@ type Model struct {
 	inputPos   int // cursor position in runes
 
 	// result state
-	rows    []wire.ResultItem
-	results map[string]tuiAggResult
-	cursor  int
+	rows             []wire.ResultItem
+	results          map[string]tuiAggResult
+	queryPlugins     map[string]tuiPluginState
+	queryStartedAtMs int64
+	cursor           int
 
 	// UI state
 	focus   focusArea
@@ -210,13 +224,14 @@ func NewModel(clientID string, debounceMs int) Model {
 	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 
 	return Model{
-		clientID:   clientID,
-		debounceMs: debounceMs,
-		spinner:    sp,
-		results:    make(map[string]tuiAggResult),
-		width:      80,
-		height:     24,
-		detail:     viewport.New(60, 20),
+		clientID:     clientID,
+		debounceMs:   debounceMs,
+		spinner:      sp,
+		results:      make(map[string]tuiAggResult),
+		queryPlugins: make(map[string]tuiPluginState),
+		width:        80,
+		height:       24,
+		detail:       viewport.New(60, 20),
 	}
 }
 
@@ -260,9 +275,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.lastQID == "" || msg.queryID != m.lastQID {
 			break
 		}
-		m.loading = false
+		m.loading = hasPendingPluginStates(msg.plugins)
 		m.rows = msg.rows
 		m.results = msg.results
+		m.queryPlugins = msg.plugins
+		m.queryStartedAtMs = msg.startedAtUnixMs
 		// clamp cursor
 		if m.cursor >= len(m.rows) {
 			m.cursor = max(0, len(m.rows)-1)
@@ -326,6 +343,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.inputPos = 0
 				m.rows = nil
 				m.results = make(map[string]tuiAggResult)
+				m.queryPlugins = make(map[string]tuiPluginState)
+				m.queryStartedAtMs = 0
 				m.cursor = 0
 				m.lastQID = ""
 				m.loading = false
@@ -471,6 +490,9 @@ func (m Model) View() string {
 		}
 		statusParts = append(statusParts, pluginStatus)
 	}
+	if queryStatus := m.renderQueryPluginStatus(time.Now()); queryStatus != "" {
+		statusParts = append(statusParts, queryStatus)
+	}
 
 	statusParts = append(statusParts, fmt.Sprintf("%d result(s)", len(m.rows)))
 	statusParts = append(statusParts, "↑↓ navigate")
@@ -480,6 +502,11 @@ func (m Model) View() string {
 	statusParts = append(statusParts, "Enter select")
 	statusParts = append(statusParts, "q quit")
 	status := styleStatusBar.Render(strings.Join(statusParts, " • "))
+	footerLines := []string{status}
+	if pluginStates := m.renderFooterPluginStates(time.Now()); pluginStates != "" {
+		footerLines = append(footerLines, styleStatusBar.Render(pluginStates))
+	}
+	footer := lipgloss.JoinVertical(lipgloss.Left, footerLines...)
 
 	// Action feedback overlay (shown above the status bar when non-empty)
 	if m.selectStatus != "" {
@@ -490,12 +517,13 @@ func (m Model) View() string {
 			feedbackStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true) // red
 		}
 		feedback := feedbackStyle.Render(m.selectStatus)
-		status = feedback + "  " + status
+		footerLines[0] = feedback + "  " + footerLines[0]
+		footer = lipgloss.JoinVertical(lipgloss.Left, footerLines...)
 	}
 
 	// ── Panels ──────────────────────────────────────────────────────────────
-	// Available height for panels (subtract header + status bar + 2 border lines each)
-	panelH := m.height - 4 // header(1) + status(1) + top-border(1) + bot-border(1)
+	// Available height for panels (subtract header + footer + 2 border lines each)
+	panelH := m.height - 3 - len(footerLines) // header(1) + footer + top-border(1) + bot-border(1)
 	if panelH < 3 {
 		panelH = 3
 	}
@@ -504,16 +532,117 @@ func (m Model) View() string {
 	if m.showDetail() {
 		right := m.renderDetail(panelH)
 		panels := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
-		return lipgloss.JoinVertical(lipgloss.Left, header, panels, status)
+		return lipgloss.JoinVertical(lipgloss.Left, header, panels, footer)
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, header, left, status)
+	return lipgloss.JoinVertical(lipgloss.Left, header, left, footer)
 }
 
 // ─── View helpers ─────────────────────────────────────────────────────────────
 
 func (m Model) showDetail() bool {
 	return m.width >= 80
+}
+
+func hasPendingPluginStates(states map[string]tuiPluginState) bool {
+	for _, st := range states {
+		if st.State == "pending" {
+			return true
+		}
+	}
+	return false
+}
+
+func (m Model) renderQueryPluginStatus(now time.Time) string {
+	if len(m.queryPlugins) == 0 {
+		return ""
+	}
+	pending := 0
+	done := 0
+	empty := 0
+	errors := 0
+	pendingNames := make([]string, 0)
+	for name, st := range m.queryPlugins {
+		switch st.State {
+		case "pending":
+			pending++
+			pendingNames = append(pendingNames, name)
+		case "done":
+			done++
+		case "empty":
+			empty++
+		case "error":
+			errors++
+		}
+	}
+	sort.Strings(pendingNames)
+	parts := []string{fmt.Sprintf("Query %d/%d done", done+empty+errors, len(m.queryPlugins))}
+	if empty > 0 {
+		parts = append(parts, fmt.Sprintf("%d empty", empty))
+	}
+	if errors > 0 {
+		parts = append(parts, fmt.Sprintf("%d error", errors))
+	}
+	if pending > 0 {
+		label := pendingNames[0]
+		if pending > 1 {
+			label = fmt.Sprintf("%s +%d", pendingNames[0], pending-1)
+		}
+		if elapsed := m.pendingElapsed(now); elapsed > 0 {
+			parts = append(parts, fmt.Sprintf("%s pending %.1fs", label, elapsed))
+		} else {
+			parts = append(parts, fmt.Sprintf("%s pending", label))
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+func (m Model) renderFooterPluginStates(now time.Time) string {
+	if len(m.queryPlugins) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(m.queryPlugins))
+	for name := range m.queryPlugins {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	parts := make([]string, 0, len(names))
+	for _, name := range names {
+		st := m.queryPlugins[name]
+		label := name + ": "
+		switch st.State {
+		case "pending":
+			if elapsed := m.pendingElapsed(now); elapsed > 0 {
+				label += fmt.Sprintf("pending %.1fs", elapsed)
+			} else {
+				label += "pending"
+			}
+		case "done":
+			label += fmt.Sprintf("done (%d)", st.Count)
+		case "empty":
+			label += "empty"
+		case "error":
+			label += "error"
+			if st.Error != "" {
+				label += ": " + st.Error
+			}
+		default:
+			label += st.State
+		}
+		parts = append(parts, truncate(label, max(12, m.width/4)))
+	}
+	return strings.Join(parts, " • ")
+}
+
+func (m Model) pendingElapsed(now time.Time) float64 {
+	if m.queryStartedAtMs <= 0 {
+		return 0
+	}
+	elapsed := now.Sub(time.UnixMilli(m.queryStartedAtMs)).Seconds()
+	if elapsed < 0 {
+		return 0
+	}
+	return elapsed
 }
 
 // renderInput renders the text input with an inline block cursor.
@@ -557,6 +686,9 @@ func (m Model) renderList(height int) string {
 		contentHeight = 1
 	}
 	lines := make([]string, 0, len(m.rows))
+	if len(m.rows) == 0 && len(m.queryPlugins) > 0 {
+		lines = append(lines, m.renderPluginStateLines(innerW, time.Now())...)
+	}
 	for i, row := range m.rows {
 		label := row.Label
 		if label == "" {
@@ -611,6 +743,35 @@ func (m Model) renderList(height int) string {
 		st = styleBorderFocused
 	}
 	return st.Width(innerW).Height(height - 2).Render(content)
+}
+
+func (m Model) renderPluginStateLines(width int, now time.Time) []string {
+	names := make([]string, 0, len(m.queryPlugins))
+	for name := range m.queryPlugins {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	lines := make([]string, 0, len(names))
+	for _, name := range names {
+		st := m.queryPlugins[name]
+		state := st.State
+		switch st.State {
+		case "pending":
+			if elapsed := m.pendingElapsed(now); elapsed > 0 {
+				state = fmt.Sprintf("pending %.1fs", elapsed)
+			}
+		case "done":
+			state = fmt.Sprintf("done (%d)", st.Count)
+		case "empty":
+			state = "empty"
+		case "error":
+			if st.Error != "" {
+				state = "error: " + st.Error
+			}
+		}
+		lines = append(lines, truncate(fmt.Sprintf("   %s %s", name, state), width))
+	}
+	return lines
 }
 
 // renderDetail renders the JSON detail panel for the selected result.
@@ -905,6 +1066,8 @@ func (m *Model) doSendQuery(text string) tea.Cmd {
 	m.lastSent = text
 	m.rows = nil
 	m.results = make(map[string]tuiAggResult)
+	m.queryPlugins = make(map[string]tuiPluginState)
+	m.queryStartedAtMs = 0
 	m.cursor = 0
 	m.loading = true
 	m.updateDetailContent()
@@ -1042,9 +1205,11 @@ func (m Model) startReaderCmd() tea.Cmd {
 						})
 					}
 					cs.program.Send(updateMsg{
-						queryID: view.QueryID,
-						rows:    rows,
-						results: view.Results,
+						queryID:         view.QueryID,
+						startedAtUnixMs: view.StartedAtUnixMs,
+						rows:            rows,
+						results:         view.Results,
+						plugins:         view.Plugins,
 					})
 				}
 			}

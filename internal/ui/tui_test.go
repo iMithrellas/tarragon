@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/iMithrellas/tarragon/internal/wire"
 )
@@ -170,5 +171,53 @@ func TestPluginColorEmpty(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("pluginColor(\"\") returned %q outside palette", col)
+	}
+}
+
+func TestHasPendingPluginStates(t *testing.T) {
+	if !hasPendingPluginStates(map[string]tuiPluginState{"websearch": {State: "pending"}}) {
+		t.Fatalf("expected pending state to be detected")
+	}
+	if hasPendingPluginStates(map[string]tuiPluginState{"calc": {State: "done"}, "files": {State: "empty"}}) {
+		t.Fatalf("did not expect pending state")
+	}
+}
+
+func TestRenderQueryPluginStatus(t *testing.T) {
+	now := time.UnixMilli(2500)
+	m := NewModel("test-client", 200)
+	m.queryStartedAtMs = 1000
+	m.queryPlugins = map[string]tuiPluginState{
+		"calc":      {State: "done", Count: 2},
+		"files":     {State: "empty"},
+		"websearch": {State: "pending"},
+		"notes":     {State: "error", Error: "timeout"},
+	}
+
+	got := m.renderQueryPluginStatus(now)
+	for _, want := range []string{"Query 3/4 done", "1 empty", "1 error", "websearch pending 1.5s"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in %q", want, got)
+		}
+	}
+}
+
+func TestRenderFooterPluginStates(t *testing.T) {
+	now := time.UnixMilli(2500)
+	m := NewModel("test-client", 200)
+	m.width = 200
+	m.queryStartedAtMs = 1000
+	m.queryPlugins = map[string]tuiPluginState{
+		"calc":      {State: "done", Count: 2},
+		"files":     {State: "empty"},
+		"websearch": {State: "pending"},
+		"notes":     {State: "error", Error: "timeout"},
+	}
+
+	got := m.renderFooterPluginStates(now)
+	for _, want := range []string{"calc: done (2)", "files: empty", "notes: error: timeout", "websearch: pending 1.5s"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in %q", want, got)
+		}
 	}
 }

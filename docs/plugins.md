@@ -67,7 +67,7 @@ Protocol:
 
 NDJSON framing means each message is exactly one JSON object on one line, terminated by `\n`.
 
-The daemon measures latency and merges your response into the shared result snapshot.
+The daemon measures latency and merges your response into the shared result snapshot. UIs also receive per-plugin query state metadata derived from dispatch/response events so they can show pending, empty, and error states while a query is still in flight.
 
 Environment variables passed to persistent plugins:
 - `TARRAGON_PLUGINS_ENDPOINT`: Unix socket path to connect to (for example, `/tmp/tarragon-plugins.sock`).

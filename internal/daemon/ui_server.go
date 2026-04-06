@@ -305,6 +305,23 @@ func dispatchQuery(ctx context.Context, queryText, qid string, mgr *plugins.Mana
 	}
 	mgr.RUnlock()
 
+	targets := make([]string, 0, len(snaps))
+	for _, snap := range snaps {
+		if !snap.cfg.Enabled {
+			continue
+		}
+		if snap.cfg.RequirePrefix && !hasTarget {
+			continue
+		}
+		if hasTarget && snap.name != targetName {
+			continue
+		}
+		targets = append(targets, snap.name)
+	}
+	if snap, ok := store.setExpectedPlugins(qid, targets); ok {
+		ui.publish(&wire.UpdateMessage{Type: "update", QueryID: qid, Payload: snap})
+	}
+
 	for _, snap := range snaps {
 		if !snap.cfg.Enabled {
 			continue
@@ -322,6 +339,9 @@ func dispatchQuery(ctx context.Context, queryText, qid string, mgr *plugins.Mana
 		if snap.cfg.Lifecycle == plugins.LifecycleOnDemandPersistent && !pluginsReg.isConnected(snap.name) {
 			if err := mgr.StartOnDemand(ctx, snap.name, wire.SocketPlugins); err != nil {
 				log.Printf("[UI] failed to start on-demand plugin %s: %v", snap.name, err)
+				if updateSnap, ok := store.markPluginError(qid, snap.name, 0, err.Error()); ok {
+					ui.publish(&wire.UpdateMessage{Type: "update", QueryID: qid, Payload: updateSnap})
+				}
 				continue
 			}
 
@@ -336,12 +356,17 @@ func dispatchQuery(ctx context.Context, queryText, qid string, mgr *plugins.Mana
 
 			if !connected {
 				log.Printf("[UI] on-demand plugin %s did not connect within 2s; skipping query %s", snap.name, qid)
+				if updateSnap, ok := store.markPluginError(qid, snap.name, 2000, "plugin did not connect"); ok {
+					ui.publish(&wire.UpdateMessage{Type: "update", QueryID: qid, Payload: updateSnap})
+				}
 				continue
 			}
 		}
 
 		if pluginsReg.isConnected(snap.name) {
 			reqOut <- pluginRequest{name: snap.name, queryID: qid, text: queryText}
+		} else if updateSnap, ok := store.markPluginError(qid, snap.name, 0, "plugin not connected"); ok {
+			ui.publish(&wire.UpdateMessage{Type: "update", QueryID: qid, Payload: updateSnap})
 		}
 	}
 

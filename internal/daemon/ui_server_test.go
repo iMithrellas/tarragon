@@ -67,26 +67,30 @@ func TestUIServer_AckAndUpdateOverUDS(t *testing.T) {
 		Input string `json:"input"`
 	}
 
-	var upd wire.UpdateMessage
-	if err := wire.ReadMsg(scanner, &upd); err != nil {
-		t.Fatalf("read update: %v", err)
-	}
-	if upd.Type != "update" || upd.QueryID != ack.QueryID {
-		t.Fatalf("unexpected update header: %+v", upd)
-	}
-
 	var snapshot aggView
-	if err := json.Unmarshal(upd.Payload, &snapshot); err != nil {
-		t.Fatalf("unmarshal snapshot: %v", err)
+	deadline = time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		var upd wire.UpdateMessage
+		if err := wire.ReadMsg(scanner, &upd); err != nil {
+			t.Fatalf("read update: %v", err)
+		}
+		if upd.Type != "update" || upd.QueryID != ack.QueryID {
+			t.Fatalf("unexpected update header: %+v", upd)
+		}
+		if err := json.Unmarshal(upd.Payload, &snapshot); err != nil {
+			t.Fatalf("unmarshal snapshot: %v", err)
+		}
+		if snapshot.Input != "hello" {
+			t.Fatalf("unexpected input: %q", snapshot.Input)
+		}
+		if r, ok := snapshot.Results[plugName]; ok {
+			if string(r.Data) != `{"ok":true,"data":"pong"}` {
+				t.Fatalf("unexpected plugin data: %s", string(r.Data))
+			}
+			return
+		}
 	}
-	if snapshot.Input != "hello" {
-		t.Fatalf("unexpected input: %q", snapshot.Input)
-	}
-	if r, ok := snapshot.Results[plugName]; !ok {
-		t.Fatalf("missing plugin result for %s", plugName)
-	} else if string(r.Data) != `{"ok":true,"data":"pong"}` {
-		t.Fatalf("unexpected plugin data: %s", string(r.Data))
-	}
+	t.Fatalf("missing plugin result for %s", plugName)
 }
 
 func TestUIServer_SelectAndDetachAck(t *testing.T) {

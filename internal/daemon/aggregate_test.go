@@ -15,6 +15,9 @@ import (
 func TestAggregateStoreCreateUpdateSnapshot(t *testing.T) {
 	s := newAggregateStore(10, "global", nil, 0.3)
 	s.create("q1", "cli1", "hello")
+	if _, ok := s.setExpectedPlugins("q1", []string{"pluginA", "pluginB"}); !ok {
+		t.Fatalf("expected setExpectedPlugins ok")
+	}
 	snap, ok := s.update("q1", "pluginA", 12.5, json.RawMessage(`{"v":1}`))
 	if !ok {
 		t.Fatalf("expected update ok")
@@ -29,6 +32,61 @@ func TestAggregateStoreCreateUpdateSnapshot(t *testing.T) {
 	r, exists := ag.Results["pluginA"]
 	if !exists || r.ElapsedMs <= 0 || string(r.Data) != `{"v":1}` {
 		t.Fatalf("unexpected result: %+v", ag.Results)
+	}
+	if ag.Plugins["pluginA"].State != "empty" {
+		t.Fatalf("expected pluginA empty state, got %+v", ag.Plugins["pluginA"])
+	}
+	if ag.Plugins["pluginB"].State != "pending" {
+		t.Fatalf("expected pluginB pending state, got %+v", ag.Plugins["pluginB"])
+	}
+}
+
+func TestAggregateStorePluginStates(t *testing.T) {
+	s := newAggregateStore(10, "global", nil, 0.3)
+	s.create("q1", "cli1", "hello")
+	snap, ok := s.setExpectedPlugins("q1", []string{"pluginA", "pluginB", "pluginC"})
+	if !ok {
+		t.Fatalf("expected setExpectedPlugins ok")
+	}
+	var ag aggregate
+	if err := json.Unmarshal(snap, &ag); err != nil {
+		t.Fatalf("unmarshal initial snapshot: %v", err)
+	}
+	if ag.Plugins["pluginA"].State != "pending" || ag.Plugins["pluginB"].State != "pending" || ag.Plugins["pluginC"].State != "pending" {
+		t.Fatalf("expected all plugins pending, got %+v", ag.Plugins)
+	}
+
+	snap, ok = s.update("q1", "pluginA", 2.5, json.RawMessage(`{"results":[{"id":"a1","label":"A1"}]}`))
+	if !ok {
+		t.Fatalf("expected pluginA update ok")
+	}
+	if err := json.Unmarshal(snap, &ag); err != nil {
+		t.Fatalf("unmarshal pluginA snapshot: %v", err)
+	}
+	if ag.Plugins["pluginA"].State != "done" || ag.Plugins["pluginA"].Count != 1 {
+		t.Fatalf("expected pluginA done with count=1, got %+v", ag.Plugins["pluginA"])
+	}
+
+	snap, ok = s.update("q1", "pluginB", 3.5, json.RawMessage(`{"results":[]}`))
+	if !ok {
+		t.Fatalf("expected pluginB update ok")
+	}
+	if err := json.Unmarshal(snap, &ag); err != nil {
+		t.Fatalf("unmarshal pluginB snapshot: %v", err)
+	}
+	if ag.Plugins["pluginB"].State != "empty" {
+		t.Fatalf("expected pluginB empty, got %+v", ag.Plugins["pluginB"])
+	}
+
+	snap, ok = s.markPluginError("q1", "pluginC", 4.5, "boom")
+	if !ok {
+		t.Fatalf("expected pluginC error ok")
+	}
+	if err := json.Unmarshal(snap, &ag); err != nil {
+		t.Fatalf("unmarshal pluginC snapshot: %v", err)
+	}
+	if ag.Plugins["pluginC"].State != "error" || ag.Plugins["pluginC"].Error != "boom" {
+		t.Fatalf("expected pluginC error state, got %+v", ag.Plugins["pluginC"])
 	}
 }
 

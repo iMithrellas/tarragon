@@ -18,13 +18,22 @@ type aggResult struct {
 	Data      json.RawMessage `json:"data"`
 }
 
+type aggPluginState struct {
+	State     string  `json:"state"`
+	Count     int     `json:"count,omitempty"`
+	ElapsedMs float64 `json:"elapsed_ms,omitempty"`
+	Error     string  `json:"error,omitempty"`
+}
+
 type aggregate struct {
-	QueryID string               `json:"query_id"`
-	Input   string               `json:"input"`
-	Results map[string]aggResult `json:"results"`
-	List    []wire.ResultItem    `json:"list"`
-	Client  string               `json:"-"`
-	Created time.Time            `json:"-"`
+	QueryID         string                    `json:"query_id"`
+	Input           string                    `json:"input"`
+	StartedAtUnixMs int64                     `json:"started_at_unix_ms"`
+	Results         map[string]aggResult      `json:"results"`
+	Plugins         map[string]aggPluginState `json:"plugins,omitempty"`
+	List            []wire.ResultItem         `json:"list"`
+	Client          string                    `json:"-"`
+	Created         time.Time                 `json:"-"`
 }
 
 type aggregateStore struct {
@@ -115,11 +124,13 @@ func (s *aggregateStore) create(qid, client, input string) {
 		}
 	}
 	s.byID[qid] = &aggregate{
-		QueryID: qid,
-		Input:   input,
-		Results: make(map[string]aggResult),
-		Client:  client,
-		Created: time.Now(),
+		QueryID:         qid,
+		Input:           input,
+		StartedAtUnixMs: time.Now().UnixMilli(),
+		Results:         make(map[string]aggResult),
+		Plugins:         make(map[string]aggPluginState),
+		Client:          client,
+		Created:         time.Now(),
 	}
 	s.order = append(s.order, qid)
 	if s.byClient[client] == nil {
@@ -128,9 +139,32 @@ func (s *aggregateStore) create(qid, client, input string) {
 	s.byClient[client][qid] = struct{}{}
 }
 
+func (s *aggregateStore) setExpectedPlugins(qid string, plugins []string) ([]byte, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ag, ok := s.byID[qid]
+	if !ok {
+		return nil, false
+	}
+	ag.Plugins = make(map[string]aggPluginState, len(plugins))
+	for _, name := range plugins {
+		ag.Plugins[name] = aggPluginState{State: "pending"}
+	}
+	return s.marshalSnapshotLocked(ag)
+}
+
 // update returns a snapshot JSON after applying the update.
 func (s *aggregateStore) update(qid, plugin string, elapsed float64, data json.RawMessage) ([]byte, bool) {
 	frecencyScores := s.frecencyScoresSnapshot()
+	items := normalizeResults(plugin, data)
+	count := len(items)
+	state := "done"
+	errMsg := extractErrorMessage(data)
+	if errMsg != "" {
+		state = "error"
+	} else if count == 0 {
+		state = "empty"
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -139,8 +173,27 @@ func (s *aggregateStore) update(qid, plugin string, elapsed float64, data json.R
 		return nil, false
 	}
 	ag.Results[plugin] = aggResult{ElapsedMs: elapsed, Data: data}
+	ag.Plugins[plugin] = aggPluginState{State: state, Count: count, ElapsedMs: elapsed, Error: errMsg}
 	ag.List = orderResults(flattenResults(ag.Results), s.orderingMode, frecencyScores, s.frecencyW)
-	snap, _ := json.Marshal(ag)
+	return s.marshalSnapshotLocked(ag)
+}
+
+func (s *aggregateStore) markPluginError(qid, plugin string, elapsed float64, errMsg string) ([]byte, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ag, ok := s.byID[qid]
+	if !ok {
+		return nil, false
+	}
+	ag.Plugins[plugin] = aggPluginState{State: "error", ElapsedMs: elapsed, Error: errMsg}
+	return s.marshalSnapshotLocked(ag)
+}
+
+func (s *aggregateStore) marshalSnapshotLocked(ag *aggregate) ([]byte, bool) {
+	snap, err := json.Marshal(ag)
+	if err != nil {
+		return nil, false
+	}
 	return snap, true
 }
 
@@ -236,6 +289,17 @@ func parseObjectItem(plugin string, obj map[string]json.RawMessage) (wire.Result
 		Score:       score,
 		Actions:     actions,
 	}, true
+}
+
+func extractErrorMessage(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(raw, &obj) != nil {
+		return ""
+	}
+	return readStringField(obj, "error")
 }
 
 func readStringField(obj map[string]json.RawMessage, key string) string {

@@ -107,14 +107,6 @@ func TestPersistentPluginE2E(t *testing.T) {
 		t.Fatal("timeout waiting for plugin request")
 	}
 
-	var upd wire.UpdateMessage
-	if err := wire.ReadMsg(uiScanner, &upd); err != nil {
-		t.Fatalf("read update: %v", err)
-	}
-	if upd.Type != "update" || upd.QueryID != ack.QueryID {
-		t.Fatalf("unexpected update header: %+v", upd)
-	}
-
 	var snap struct {
 		QueryID string `json:"query_id"`
 		Input   string `json:"input"`
@@ -122,22 +114,32 @@ func TestPersistentPluginE2E(t *testing.T) {
 			Data json.RawMessage `json:"data"`
 		} `json:"results"`
 	}
-	if err := json.Unmarshal(upd.Payload, &snap); err != nil {
-		t.Fatalf("unmarshal update payload: %v", err)
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		var upd wire.UpdateMessage
+		if err := wire.ReadMsg(uiScanner, &upd); err != nil {
+			t.Fatalf("read update: %v", err)
+		}
+		if upd.Type != "update" || upd.QueryID != ack.QueryID {
+			t.Fatalf("unexpected update header: %+v", upd)
+		}
+		if err := json.Unmarshal(upd.Payload, &snap); err != nil {
+			t.Fatalf("unmarshal update payload: %v", err)
+		}
+		if snap.QueryID != ack.QueryID {
+			t.Fatalf("snapshot query mismatch: got=%q want=%q", snap.QueryID, ack.QueryID)
+		}
+		if snap.Input != "hello world" {
+			t.Fatalf("snapshot input mismatch: got=%q", snap.Input)
+		}
+		if res, ok := snap.Results[pluginName]; ok {
+			if string(res.Data) != `{"ok":true,"source":"persistent"}` {
+				t.Fatalf("unexpected plugin data: %s", string(res.Data))
+			}
+			return
+		}
 	}
-	if snap.QueryID != ack.QueryID {
-		t.Fatalf("snapshot query mismatch: got=%q want=%q", snap.QueryID, ack.QueryID)
-	}
-	if snap.Input != "hello world" {
-		t.Fatalf("snapshot input mismatch: got=%q", snap.Input)
-	}
-	res, ok := snap.Results[pluginName]
-	if !ok {
-		t.Fatalf("missing plugin result for %s", pluginName)
-	}
-	if string(res.Data) != `{"ok":true,"source":"persistent"}` {
-		t.Fatalf("unexpected plugin data: %s", string(res.Data))
-	}
+	t.Fatalf("missing plugin result for %s", pluginName)
 }
 
 func dialUnixWithRetry(path string, timeout time.Duration) (net.Conn, error) {
