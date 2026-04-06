@@ -1,13 +1,12 @@
 # Building a Plugin for Tarragon
 
-Disclaimer: This documentation was created with the help of an AI assistant. It may contain inaccuracies or omissions; please validate details and test in your environment.
+This guide explains how plugins integrate with the Tarragon daemon today.
 
-This guide explains how to implement a plugin that integrates with the Tarragon daemon. Two modes are supported:
+Plugins declare a lifecycle in `plugin.toml`, and Tarragon runs them according to that lifecycle:
 
-1) Preferred (fast): persistent process speaking NDJSON over a Unix Domain Socket to the daemon.
-2) Fallback (simple): `--once <text>` CLI that prints a single JSON response to stdout.
-
-The daemon can use either path; it prefers the persistent socket mode when your plugin connects and falls back to `--once` if not.
+1. `daemon`: a persistent process speaking NDJSON over a Unix Domain Socket.
+2. `on_demand_persistent`: a persistent process that Tarragon starts on first use, then keeps running until the daemon shuts down or the plugin is stopped.
+3. `on_call`: a one-shot executable invoked as `entrypoint --once <text>`.
 
 ## Directory Layout and Install
 
@@ -48,11 +47,11 @@ icon = "calc.png"  # Optional: Icon path
 ```
 
 Lifecycle modes:
-- `daemon`: started and managed persistently by the launcher; should speak NDJSON over a Unix Domain Socket.
-- `on_demand_persistent`: started when first needed and kept while the UI is attached (future flow).
-- `on_call`: executed per request via `--once` (no persistent connection required).
+- `daemon`: started by the daemon at startup and kept running.
+- `on_demand_persistent`: started when a matching query needs the plugin and kept running afterward.
+- `on_call`: executed per request via `--once` and expected to print one JSON payload to stdout.
 
-## Unix Domain Socket + NDJSON Protocol (Recommended)
+## Unix Domain Socket + NDJSON Protocol
 
 Endpoint: `/tmp/tarragon-plugins.sock` (daemon listener)
 
@@ -68,9 +67,9 @@ Protocol:
 
 NDJSON framing means each message is exactly one JSON object on one line, terminated by `\n`.
 
-The daemon measures latency and merges your response into the UI snapshot.
+The daemon measures latency and merges your response into the shared result snapshot.
 
-Environment variables passed to daemon‑mode plugins:
+Environment variables passed to persistent plugins:
 - `TARRAGON_PLUGINS_ENDPOINT`: Unix socket path to connect to (for example, `/tmp/tarragon-plugins.sock`).
 - `TARRAGON_PLUGIN_NAME`: The configured plugin name.
 
@@ -121,17 +120,62 @@ for line in reader.lines() {
 }
 ```
 
-## Fallback CLI (`--once`)
+## On-Call CLI (`--once`)
 
-If your plugin does not use persistent socket mode, support a simple command-line path:
+If your plugin uses `lifecycle_mode = "on_call"`, Tarragon runs it as a simple one-shot command:
 
 ```
 $ my_plugin --once "hello world"
 {"input":"hello world","variants":["HELLO WORLD","Hello World","world hello"]}
 ```
 
-- The daemon runs `entrypoint --once <text>` and expects a single JSON object on stdout.
+- Tarragon runs `entrypoint --once <text>` and expects a single JSON object on stdout.
 - Stderr is captured for logging; non-zero exit will be surfaced as an error payload.
+
+## Result Shape
+
+Plugin payloads are normalized into Tarragon result items. The daemon currently understands these common shapes:
+
+- `{ "results": [...] }`
+- `{ "suggestions": [...] }`
+- `{ "items": [...] }`
+- `{ "choices": [...] }`
+- `{ "variants": [...] }`
+- `[ ... ]`
+- a single object with `id` plus one of `label`, `title`, or `text`
+
+Array items can be objects or strings.
+
+Recognized object fields:
+
+- `id`
+- `label`, `title`, or `text`
+- `description`
+- `icon`
+- `category`
+- `score`
+- `preview_path`
+- `actions`
+
+Example:
+
+```json
+{
+  "results": [
+    {
+      "id": "firefox.desktop",
+      "label": "Firefox",
+      "description": "Web browser",
+      "score": 0.97,
+      "icon": "firefox",
+      "category": "apps",
+      "actions": [
+        { "name": "open", "default": true }
+      ]
+    }
+  ]
+}
+```
 
 ## Makefile Specification (Required)
 
@@ -143,6 +187,14 @@ install:      # build and copy files into ~/.local/lib/tarragon/plugins/<name>/
 uninstall:    # remove installed files from the plugin directory
 run:          # local quick test (e.g., --once "Hello")
 ```
+
+Tarragon's install flow currently:
+
+1. clones the plugin repository,
+2. validates `plugin.toml`,
+3. runs `make check-deps`,
+4. runs `make install`, passing `INSTALL_ROOT` and `PLUGIN_DIR`,
+5. verifies the installed plugin directory exists.
 
 Example (Python):
 
@@ -169,12 +221,12 @@ run:
 
 ## Logging
 
-- Log initialization and readiness clearly (e.g., after sending the hello message over the socket).
+- Log initialization and readiness clearly (for persistent plugins, after sending the hello message over the socket).
 - Log each request/response pair with the `query_id` to aid tracing.
 - For long-running plugins, add periodic heartbeat logs.
 
 ## Security & Resource Notes
 
 - Treat input as untrusted; validate/escape as needed in shell calls.
-- Avoid expensive initialization in per-request paths; prefer the persistent Unix socket connection for performance.
+- Avoid expensive initialization in per-request paths; prefer a persistent lifecycle when the plugin is queried often.
 - Keep stdout strictly for protocol JSON in `--once` mode.
