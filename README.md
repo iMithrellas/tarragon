@@ -39,10 +39,11 @@ Plugins can be invoked directly or contextually, and can expose commands, values
 - **Persistent Processes & IPC**: For responsiveness, plugins providing real-time suggestions typically run as persistent processes managed by the launcher daemon, communicating via efficient IPC (Unix Domain Sockets + NDJSON) or potentially via TCP (remote/containerized plugins). This avoids per-keystroke lag.
 - **Plugin Lifecycle Modes**: Plugins declare their required lifecycle:
     - `daemon`: Runs persistently alongside the launcher daemon (e.g., clipboard manager).
-    - `on_demand_persistent`: Started when the UI attaches or first needed; remains active while UI is shown (e.g., calculator, file search).
-    - `on_call`: Executed only when explicitly invoked, typically via a prefix (e.g., web search).
+    - `on_demand_persistent`: Started when first needed for a query and kept running afterward.
+    - `on_call`: Executed per request (ephemeral process lifecycle).
 - **Fan-Out/Gather for Suggestions**: Input is broadcast to the app searcher and all relevant running plugins concurrently. Results are gathered asynchronously and displayed.
-- **Optional Prefixes**: Prefixes (e.g., `@search`) remain available to *force* querying a specific plugin.
+- **Dispatch Controls**: `require_prefix` gates prefix-only plugins, while `provides_general_suggestions` is the general-suggestion eligibility contract for global/unprefixed fan-out.
+- **Optional Prefixes**: Prefixes (e.g., `@search`) can still force explicit dispatch to a specific plugin.
 
 ### Plugin Installation & Security
 - **Location**: Plugins reside in `~/.local/lib/tarragon/plugins/`.

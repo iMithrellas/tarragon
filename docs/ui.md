@@ -34,6 +34,15 @@ NDJSON framing means each message is exactly one JSON object on one line, termin
 - Snapshots: Each update contains the full current aggregate (no delta merging needed).
 - Plugin progress: the aggregate snapshot includes a `plugins` map keyed by plugin name. UIs can render pending/empty/error states and compute pending elapsed time from `started_at_unix_ms`.
 
+### Lifecycle-aware availability
+
+When consuming daemon status metadata:
+
+- treat `connected` as current IPC attachment state (primarily relevant for persistent lifecycles),
+- do not treat `connected=false` as unavailable for enabled `on_call` plugins.
+
+`on_call` plugins are expected to be dispatchable without a persistent connection.
+
 ## Message Shapes
 
 - Query (UI → Daemon, NDJSON line):

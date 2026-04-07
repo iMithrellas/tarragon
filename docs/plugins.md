@@ -17,6 +17,28 @@ There are two supported plugin sources:
 1. **Local plugin directory** (installed with `tarragon plugin install`): `entrypoint` is typically a path relative to the plugin directory.
 2. **System plugin** (enabled with `tarragon plugin enable <name>`): Tarragon resolves the binary with `which <name>`, runs `<binary> tarragon manifest`, rewrites a relative `entrypoint` to the resolved absolute binary path, appends `source = "system"`, and stores the resulting manifest in Tarragon's plugin directory.
 
+### System Plugin Enable + Reload Behavior
+
+`tarragon plugin enable <name>` writes/updates plugin metadata on disk. A running daemon must reload or restart before it can use new manifests.
+
+Current behavior note: `enable` itself does not trigger daemon reload. In practice, restart the daemon or issue a reload-triggering config update (for example via `tarragon plugin config ...`).
+
+Integration contract:
+
+- enable writes the plugin manifest into Tarragon's plugin directory with system entrypoint normalization.
+- reload re-reads plugin metadata/config and refreshes in-memory plugin state used for status + dispatch.
+- after reload, newly enabled system plugins are eligible for status/dispatch according to their manifest fields (`enabled`, `lifecycle_mode`, `prefix`, `require_prefix`, `provides_general_suggestions`).
+
+### Plugin Source Metadata
+
+System-enabled manifests include:
+
+```toml
+source = "system"
+```
+
+If source metadata is surfaced in status/runtime payloads, treat it as origin metadata (`system` vs local/default). Clients should tolerate missing source metadata for compatibility with older runtimes.
+
 - Required files:
   - `plugin.toml` (configuration)
   - `entrypoint` executable (e.g., `my_plugin.py` or `my_plugin`)
@@ -55,6 +77,26 @@ Lifecycle modes:
 - `daemon`: started by the daemon at startup and kept running.
 - `on_demand_persistent`: started when a matching query needs the plugin and kept running afterward.
 - `on_call`: executed per request via `tarragon query <text>`.
+
+## Dispatch Eligibility and Prefix Targeting
+
+Tarragon supports both global (unprefixed) and explicit prefix-targeted dispatch.
+
+- **Global/unprefixed query**:
+  - `require_prefix = true` excludes a plugin from unprefixed dispatch.
+  - `provides_general_suggestions` is the contract field for general-suggestion eligibility. Older runtimes may still fan out to all non-`require_prefix` plugins.
+- **Prefix-targeted query**: when input starts with a plugin prefix, Tarragon dispatches only to the matched plugin and forwards query text with the prefix removed.
+  - Prefix-targeted dispatch does not depend on `provides_general_suggestions`.
+  - If prefixes overlap, the longest matching prefix wins.
+
+Use `require_prefix` for strict prefix-only plugins. Use `provides_general_suggestions` as the explicit global-eligibility signal; clients should tolerate legacy runtimes where this flag is not yet enforced in dispatch.
+
+## Lifecycle-Aware Status Expectations
+
+- `daemon` and `on_demand_persistent` plugins may be persistently connected (`connected=true`) while running.
+- `on_call` plugins are ephemeral and usually not connected between requests.
+
+Treat `connected` as transport state, not total availability. An enabled `on_call` plugin can be dispatchable even while not persistently connected.
 
 Entrypoint path rules:
 - Relative `entrypoint`: resolved from the plugin directory (`~/.local/lib/tarragon/plugins/<name>/...`).
