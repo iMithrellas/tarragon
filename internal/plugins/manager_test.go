@@ -18,6 +18,7 @@ func TestDiscoverLoadsPluginConfig(t *testing.T) {
 	toml := []byte("" +
 		"name=\"example\"\n" +
 		"description=\"demo\"\n" +
+		"source=\"system\"\n" +
 		"enabled=true\n" +
 		"entrypoint=\"run.sh\"\n" +
 		"lifecycle_mode=\"on_call\"\n")
@@ -35,6 +36,9 @@ func TestDiscoverLoadsPluginConfig(t *testing.T) {
 	}
 	if p.Config.Name != "example" || p.Config.Entrypoint != "run.sh" || p.Dir != plugDir {
 		t.Fatalf("unexpected plugin: %+v", p)
+	}
+	if p.Config.Source != "system" {
+		t.Fatalf("expected source to be loaded, got %q", p.Config.Source)
 	}
 }
 

@@ -64,6 +64,7 @@ type AckMessage struct {
 type PluginInfo struct {
 	Name            string   `json:"name"`
 	Description     string   `json:"description,omitempty"`
+	Source          string   `json:"source,omitempty"`
 	Enabled         bool     `json:"enabled"`
 	Connected       bool     `json:"connected"`
 	Lifecycle       string   `json:"lifecycle"`

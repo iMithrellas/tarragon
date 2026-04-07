@@ -203,6 +203,7 @@ func handleUIClient(ctx context.Context, conn net.Conn, mgr *plugins.Manager, re
 				pluginInfos = append(pluginInfos, wire.PluginInfo{
 					Name:            p.Config.Name,
 					Description:     p.Config.Description,
+					Source:          p.Config.Source,
 					Enabled:         p.Config.Enabled,
 					Connected:       pluginsReg.isConnected(p.Config.Name),
 					Lifecycle:       string(p.Config.Lifecycle),

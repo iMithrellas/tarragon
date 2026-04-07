@@ -181,6 +181,74 @@ func TestUIServer_SelectAndDetachAck(t *testing.T) {
 	}
 }
 
+func TestUIServer_StatusIncludesPluginSourceMetadata(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mgr := plugins.NewManager("-")
+	mgr.Plugins["sys_plugin"] = &plugins.Plugin{Config: plugins.PluginConfig{
+		Name:      "sys_plugin",
+		Source:    "system",
+		Enabled:   true,
+		Lifecycle: plugins.LifecycleOnCall,
+	}}
+	mgr.Plugins["legacy_plugin"] = &plugins.Plugin{Config: plugins.PluginConfig{
+		Name:      "legacy_plugin",
+		Enabled:   true,
+		Lifecycle: plugins.LifecycleOnCall,
+	}}
+
+	store := newAggregateStore(10, "global", nil, 0.3)
+	uiReg := newUIRegistry()
+	reqOut := make(chan pluginRequest, 16)
+	plugReg := &pluginRegistry{conns: map[string]net.Conn{}, scanners: map[string]*bufio.Scanner{}}
+
+	go startUIServer(ctx, mgr, reqOut, plugReg, store, uiReg, nil)
+
+	deadline := time.Now().Add(3 * time.Second)
+	var conn net.Conn
+	var err error
+	for time.Now().Before(deadline) {
+		conn, err = net.Dial("unix", wire.SocketUI)
+		if err == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("dial ui socket: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	scanner := wire.NewScanner(conn)
+	if err := wire.WriteMsg(conn, &wire.UIRequest{Type: "status", ClientID: "cli-test"}); err != nil {
+		t.Fatalf("write status: %v", err)
+	}
+
+	var status wire.StatusResponse
+	if err := wire.ReadMsg(scanner, &status); err != nil {
+		t.Fatalf("read status: %v", err)
+	}
+	if status.Type != wire.MsgStatus {
+		t.Fatalf("unexpected status type: %q", status.Type)
+	}
+	if status.Total != 2 {
+		t.Fatalf("expected 2 enabled plugins, got %d", status.Total)
+	}
+
+	seen := map[string]wire.PluginInfo{}
+	for _, info := range status.Plugins {
+		seen[info.Name] = info
+	}
+
+	if got := seen["sys_plugin"].Source; got != "system" {
+		t.Fatalf("expected sys_plugin source=system, got %q", got)
+	}
+	if got := seen["legacy_plugin"].Source; got != "" {
+		t.Fatalf("expected legacy_plugin source empty, got %q", got)
+	}
+}
+
 func TestUIServer_OnCallSelectInvokesCLI(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
