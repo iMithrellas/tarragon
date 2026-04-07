@@ -36,6 +36,9 @@ func TestDiscoverLoadsPluginConfig(t *testing.T) {
 	if p.Config.Name != "example" || p.Config.Entrypoint != "run.sh" || p.Dir != plugDir {
 		t.Fatalf("unexpected plugin: %+v", p)
 	}
+	if !p.Config.ProvidesGeneral {
+		t.Fatalf("expected provides_general_suggestions default true when omitted")
+	}
 }
 
 func TestDefaultDirContainsHome(t *testing.T) {
