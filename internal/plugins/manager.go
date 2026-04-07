@@ -125,6 +125,48 @@ func (m *Manager) Discover() error {
 	return nil
 }
 
+// DiscoverNew scans the plugin directory and adds only plugins not already
+// present in the manager.
+//
+// Existing plugin entries are left untouched so any in-memory runtime state
+// (running process handles, etc.) remains consistent.
+func (m *Manager) DiscoverNew() error {
+	entries, err := os.ReadDir(m.pluginDir)
+	if err != nil {
+		return fmt.Errorf("reading plugin dir: %w", err)
+	}
+
+	for _, ent := range entries {
+		if !ent.IsDir() {
+			continue
+		}
+		cfgPath := filepath.Join(m.pluginDir, ent.Name(), "plugin.toml")
+		data, err := os.ReadFile(cfgPath)
+		if err != nil {
+			log.Printf("Skipping plugin %s: %v", ent.Name(), err)
+			continue
+		}
+
+		var cfg PluginConfig
+		if err := toml.Unmarshal(data, &cfg); err != nil {
+			log.Printf("Invalid config for %s: %v", ent.Name(), err)
+			continue
+		}
+		if cfg.Name == "" {
+			cfg.Name = ent.Name()
+		}
+
+		if _, exists := m.Plugins[cfg.Name]; exists {
+			continue
+		}
+
+		plugin := &Plugin{Config: cfg, BaseConfig: cfg, Dir: filepath.Join(m.pluginDir, ent.Name())}
+		m.Plugins[cfg.Name] = plugin
+	}
+
+	return nil
+}
+
 // ApplyOverrides merges [plugins.<name>] config overrides from Viper on top of
 // discovered plugin.toml defaults.
 //
