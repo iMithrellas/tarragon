@@ -239,6 +239,16 @@ func handleUIClient(ctx context.Context, conn net.Conn, mgr *plugins.Manager, re
 				beforeLifecycle[name] = p.Config.Lifecycle
 			}
 
+			if err := mgr.DiscoverNew(); err != nil {
+				mgr.Unlock()
+				_ = wire.WriteMsg(conn, &wire.ReloadResponse{
+					Type:    "reload_response",
+					Success: false,
+					Message: fmt.Sprintf("failed to discover new plugins: %v", err),
+				})
+				continue
+			}
+
 			if err := mgr.ApplyOverrides(); err != nil {
 				mgr.Unlock()
 				_ = wire.WriteMsg(conn, &wire.ReloadResponse{

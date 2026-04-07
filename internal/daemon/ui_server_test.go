@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/iMithrellas/tarragon/internal/db"
 	"github.com/iMithrellas/tarragon/internal/plugins"
 	"github.com/iMithrellas/tarragon/internal/wire"
+	"github.com/spf13/viper"
 )
 
 func TestUIServer_AckAndUpdateOverUDS(t *testing.T) {
@@ -260,5 +262,72 @@ func TestUIServer_OnCallSelectInvokesCLI(t *testing.T) {
 	case forwarded := <-reqOut:
 		t.Fatalf("did not expect forwarded select for on_call plugin: %+v", forwarded)
 	default:
+	}
+}
+
+func TestUIServer_ReloadDiscoversNewPlugins(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	pluginRoot := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(configPath, []byte("[plugins]\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	viper.SetConfigFile(configPath)
+
+	mgr := plugins.NewManager(pluginRoot)
+	if err := os.MkdirAll(filepath.Join(pluginRoot, "existing"), 0o755); err != nil {
+		t.Fatalf("mkdir existing plugin: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginRoot, "existing", "plugin.toml"), []byte(""+
+		"name=\"existing\"\n"+
+		"enabled=true\n"+
+		"entrypoint=\"existing.sh\"\n"+
+		"lifecycle_mode=\"on_call\"\n"), 0o644); err != nil {
+		t.Fatalf("write existing manifest: %v", err)
+	}
+	if err := mgr.Discover(); err != nil {
+		t.Fatalf("initial discover: %v", err)
+	}
+
+	store := newAggregateStore(10, "global", nil, 0.3)
+	uiReg := newUIRegistry()
+	reqOut := make(chan pluginRequest, 8)
+	plugReg := &pluginRegistry{conns: map[string]net.Conn{}, scanners: map[string]*bufio.Scanner{}}
+
+	serverConn, clientConn := net.Pipe()
+	defer func() { _ = clientConn.Close() }()
+	go handleUIClient(ctx, serverConn, mgr, reqOut, plugReg, store, uiReg, nil)
+
+	if err := os.MkdirAll(filepath.Join(pluginRoot, "newplug"), 0o755); err != nil {
+		t.Fatalf("mkdir new plugin: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginRoot, "newplug", "plugin.toml"), []byte(""+
+		"name=\"newplug\"\n"+
+		"enabled=true\n"+
+		"entrypoint=\"new.sh\"\n"+
+		"lifecycle_mode=\"on_call\"\n"), 0o644); err != nil {
+		t.Fatalf("write new manifest: %v", err)
+	}
+
+	if err := wire.WriteMsg(clientConn, &wire.UIRequest{Type: "reload", ClientID: "cli-test"}); err != nil {
+		t.Fatalf("write reload: %v", err)
+	}
+
+	scanner := wire.NewScanner(clientConn)
+	var reloadResp wire.ReloadResponse
+	if err := wire.ReadMsg(scanner, &reloadResp); err != nil {
+		t.Fatalf("read reload response: %v", err)
+	}
+	if !reloadResp.Success {
+		t.Fatalf("reload failed: %s", reloadResp.Message)
+	}
+
+	if _, ok := mgr.Plugins["newplug"]; !ok {
+		t.Fatalf("expected new plugin to be discovered after reload")
 	}
 }

@@ -130,3 +130,56 @@ func TestResolveEntrypoint(t *testing.T) {
 		}
 	})
 }
+
+func TestDiscoverNewAddsMissingWithoutOverwritingExisting(t *testing.T) {
+	root := t.TempDir()
+
+	existingDir := filepath.Join(root, "existing")
+	if err := os.MkdirAll(existingDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(existingDir, "plugin.toml"), []byte(""+
+		"name=\"existing\"\n"+
+		"enabled=true\n"+
+		"entrypoint=\"new.sh\"\n"+
+		"lifecycle_mode=\"on_call\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	addedDir := filepath.Join(root, "added")
+	if err := os.MkdirAll(addedDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(addedDir, "plugin.toml"), []byte(""+
+		"name=\"added\"\n"+
+		"enabled=true\n"+
+		"entrypoint=\"added.sh\"\n"+
+		"lifecycle_mode=\"on_call\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	original := &Plugin{Config: PluginConfig{Name: "existing", Entrypoint: "old.sh", Enabled: true, Lifecycle: LifecycleDaemon}}
+	original.running.Store(true)
+
+	m := NewManager(root)
+	m.Plugins["existing"] = original
+
+	if err := m.DiscoverNew(); err != nil {
+		t.Fatalf("DiscoverNew: %v", err)
+	}
+
+	if got := m.Plugins["existing"]; got != original {
+		t.Fatalf("expected existing plugin pointer preserved")
+	}
+	if !m.Plugins["existing"].Running() {
+		t.Fatalf("expected existing running state to be preserved")
+	}
+
+	added, ok := m.Plugins["added"]
+	if !ok {
+		t.Fatalf("expected newly discovered plugin to be added")
+	}
+	if added.Config.Entrypoint != "added.sh" {
+		t.Fatalf("unexpected added plugin entrypoint: %q", added.Config.Entrypoint)
+	}
+}
