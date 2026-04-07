@@ -28,6 +28,7 @@ const (
 type PluginConfig struct {
 	Name        string        `toml:"name"`
 	Description string        `toml:"description"`
+	Source      string        `toml:"source"`
 	Enabled     bool          `toml:"enabled"`
 	Entrypoint  string        `toml:"entrypoint"`
 	Lifecycle   LifecycleMode `toml:"lifecycle_mode"`
