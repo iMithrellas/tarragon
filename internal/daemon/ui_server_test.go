@@ -331,3 +331,119 @@ func TestUIServer_ReloadDiscoversNewPlugins(t *testing.T) {
 		t.Fatalf("expected new plugin to be discovered after reload")
 	}
 }
+
+func TestDispatchQuery_GlobalRespectsGeneralSuggestionEligibility(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	entry := writeScript(t, dir, "oncall.sh", "#!/usr/bin/env bash\nif [[ \"$1\" == \"tarragon\" && \"$2\" == \"query\" ]]; then echo '{\"ok\":true}'; fi\n")
+
+	mgr := plugins.NewManager("-")
+	mgr.Plugins["daemon_general"] = &plugins.Plugin{Config: plugins.PluginConfig{Name: "daemon_general", Enabled: true, Lifecycle: plugins.LifecycleDaemon, ProvidesGeneral: true}}
+	mgr.Plugins["daemon_no_general"] = &plugins.Plugin{Config: plugins.PluginConfig{Name: "daemon_no_general", Enabled: true, Lifecycle: plugins.LifecycleDaemon, ProvidesGeneral: false}}
+	mgr.Plugins["daemon_require_prefix"] = &plugins.Plugin{Config: plugins.PluginConfig{Name: "daemon_require_prefix", Enabled: true, Lifecycle: plugins.LifecycleDaemon, ProvidesGeneral: true, RequirePrefix: true, Prefix: "@d"}}
+	mgr.Plugins["ondemand_general"] = &plugins.Plugin{Config: plugins.PluginConfig{Name: "ondemand_general", Enabled: true, Lifecycle: plugins.LifecycleOnDemandPersistent, ProvidesGeneral: true}}
+	mgr.Plugins["ondemand_no_general"] = &plugins.Plugin{Config: plugins.PluginConfig{Name: "ondemand_no_general", Enabled: true, Lifecycle: plugins.LifecycleOnDemandPersistent, ProvidesGeneral: false}}
+	mgr.Plugins["oncall_general"] = &plugins.Plugin{Dir: dir, Config: plugins.PluginConfig{Name: "oncall_general", Entrypoint: filepath.Base(entry), Enabled: true, Lifecycle: plugins.LifecycleOnCall, ProvidesGeneral: true}}
+	mgr.Plugins["oncall_no_general"] = &plugins.Plugin{Dir: dir, Config: plugins.PluginConfig{Name: "oncall_no_general", Entrypoint: filepath.Base(entry), Enabled: true, Lifecycle: plugins.LifecycleOnCall, ProvidesGeneral: false}}
+
+	store := newAggregateStore(10, "global", nil, 0.3)
+	store.create("q-global", "cli", "hello")
+	uiReg := newUIRegistry()
+	reqOut := make(chan pluginRequest, 16)
+	plugReg := &pluginRegistry{conns: map[string]net.Conn{}, scanners: map[string]*bufio.Scanner{}}
+
+	for _, name := range []string{"daemon_general", "daemon_no_general", "daemon_require_prefix", "ondemand_general", "ondemand_no_general"} {
+		srv, cli := net.Pipe()
+		t.Cleanup(func() {
+			_ = srv.Close()
+			_ = cli.Close()
+		})
+		plugReg.set(name, srv, wire.NewScanner(srv))
+	}
+
+	dispatchQuery(ctx, "hello", "q-global", mgr, reqOut, plugReg, store, uiReg, false, "")
+
+	routed := map[string]bool{}
+	for {
+		select {
+		case req := <-reqOut:
+			routed[req.name] = true
+		default:
+			goto done
+		}
+	}
+done:
+
+	if len(routed) != 2 || !routed["daemon_general"] || !routed["ondemand_general"] {
+		t.Fatalf("unexpected persistent routing set: %+v", routed)
+	}
+
+	store.mu.Lock()
+	ag := store.byID["q-global"]
+	pluginsState := make(map[string]aggPluginState, len(ag.Plugins))
+	for name, state := range ag.Plugins {
+		pluginsState[name] = state
+	}
+	_, hasDaemonGeneral := ag.Plugins["daemon_general"]
+	_, hasOndemandGeneral := ag.Plugins["ondemand_general"]
+	_, hasOnCallGeneral := ag.Plugins["oncall_general"]
+	_, hasDaemonNoGeneral := ag.Plugins["daemon_no_general"]
+	_, hasOndemandNoGeneral := ag.Plugins["ondemand_no_general"]
+	_, hasOnCallNoGeneral := ag.Plugins["oncall_no_general"]
+	_, hasRequirePrefix := ag.Plugins["daemon_require_prefix"]
+	store.mu.Unlock()
+
+	if !hasDaemonGeneral || !hasOndemandGeneral || !hasOnCallGeneral {
+		t.Fatalf("expected eligible plugins in expected set, got %+v", pluginsState)
+	}
+	if hasDaemonNoGeneral || hasOndemandNoGeneral || hasOnCallNoGeneral || hasRequirePrefix {
+		t.Fatalf("ineligible plugins should not be in expected set, got %+v", pluginsState)
+	}
+}
+
+func TestDispatchQuery_ExplicitTargetBypassesGeneralEligibility(t *testing.T) {
+	ctx := context.Background()
+	mgr := plugins.NewManager("-")
+	mgr.Plugins["target"] = &plugins.Plugin{Config: plugins.PluginConfig{Name: "target", Enabled: true, Lifecycle: plugins.LifecycleDaemon, ProvidesGeneral: false, RequirePrefix: true, Prefix: "@target"}}
+	mgr.Plugins["other"] = &plugins.Plugin{Config: plugins.PluginConfig{Name: "other", Enabled: true, Lifecycle: plugins.LifecycleDaemon, ProvidesGeneral: true}}
+
+	store := newAggregateStore(10, "global", nil, 0.3)
+	store.create("q-target", "cli", "query")
+	uiReg := newUIRegistry()
+	reqOut := make(chan pluginRequest, 16)
+	plugReg := &pluginRegistry{conns: map[string]net.Conn{}, scanners: map[string]*bufio.Scanner{}}
+
+	for _, name := range []string{"target", "other"} {
+		srv, cli := net.Pipe()
+		t.Cleanup(func() {
+			_ = srv.Close()
+			_ = cli.Close()
+		})
+		plugReg.set(name, srv, wire.NewScanner(srv))
+	}
+
+	dispatchQuery(ctx, "query", "q-target", mgr, reqOut, plugReg, store, uiReg, true, "target")
+
+	select {
+	case req := <-reqOut:
+		if req.name != "target" {
+			t.Fatalf("expected target plugin only, got %+v", req)
+		}
+	default:
+		t.Fatalf("expected dispatch to targeted plugin")
+	}
+
+	select {
+	case req := <-reqOut:
+		t.Fatalf("expected only one routed request, got extra: %+v", req)
+	default:
+	}
+
+	store.mu.Lock()
+	_, hasTarget := store.byID["q-target"].Plugins["target"]
+	_, hasOther := store.byID["q-target"].Plugins["other"]
+	store.mu.Unlock()
+	if !hasTarget || hasOther {
+		t.Fatalf("unexpected expected-plugin set: target=%v other=%v", hasTarget, hasOther)
+	}
+}

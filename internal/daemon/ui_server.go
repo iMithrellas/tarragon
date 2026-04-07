@@ -343,10 +343,7 @@ func dispatchQuery(ctx context.Context, queryText, qid string, mgr *plugins.Mana
 		if !snap.cfg.Enabled {
 			continue
 		}
-		if snap.cfg.RequirePrefix && !hasTarget {
-			continue
-		}
-		if hasTarget && snap.name != targetName {
+		if !isEligibleForDispatch(snap.name, snap.cfg, hasTarget, targetName) {
 			continue
 		}
 		targets = append(targets, snap.name)
@@ -362,10 +359,7 @@ func dispatchQuery(ctx context.Context, queryText, qid string, mgr *plugins.Mana
 		if snap.cfg.Lifecycle == plugins.LifecycleOnCall {
 			continue
 		}
-		if snap.cfg.RequirePrefix && !hasTarget {
-			continue
-		}
-		if hasTarget && snap.name != targetName {
+		if !isEligibleForDispatch(snap.name, snap.cfg, hasTarget, targetName) {
 			continue
 		}
 
@@ -407,10 +401,7 @@ func dispatchQuery(ctx context.Context, queryText, qid string, mgr *plugins.Mana
 		if !snap.cfg.Enabled || snap.cfg.Lifecycle != plugins.LifecycleOnCall {
 			continue
 		}
-		if snap.cfg.RequirePrefix && !hasTarget {
-			continue
-		}
-		if hasTarget && snap.name != targetName {
+		if !isEligibleForDispatch(snap.name, snap.cfg, hasTarget, targetName) {
 			continue
 		}
 		t0 := time.Now()
@@ -424,6 +415,16 @@ func dispatchQuery(ctx context.Context, queryText, qid string, mgr *plugins.Mana
 			ui.publish(&wire.UpdateMessage{Type: "update", QueryID: qid, Payload: updateSnap})
 		}
 	}
+}
+
+func isEligibleForDispatch(name string, cfg plugins.PluginConfig, hasTarget bool, targetName string) bool {
+	if hasTarget {
+		return name == targetName
+	}
+	if cfg.RequirePrefix {
+		return false
+	}
+	return cfg.ProvidesGeneral
 }
 
 // atomicAdd wraps sync/atomic.AddUint64 for clarity.
