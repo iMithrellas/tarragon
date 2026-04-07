@@ -30,7 +30,7 @@ make build
 ```bash
 make run
 # or
-go run . --once "invoice"
+go run . tarragon query "invoice"
 ```
 
 ## Install for Tarragon

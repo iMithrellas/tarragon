@@ -16,9 +16,9 @@ If the prefix does not match one of the supported engines, it returns no results
 ## Examples
 
 ```bash
-python3 websearch_plugin.py --once "g neural networks"
-python3 websearch_plugin.py --once "yt ambient music"
-python3 websearch_plugin.py --once "ddg"
+python3 websearch_plugin.py tarragon query "g neural networks"
+python3 websearch_plugin.py tarragon query "yt ambient music"
+python3 websearch_plugin.py tarragon query "ddg"
 ```
 
 ## Install

@@ -38,7 +38,7 @@ make run
 Or directly:
 
 ```bash
-python3 desktop_files_plugin.py --once "firefox"
+python3 desktop_files_plugin.py tarragon query "firefox"
 ```
 
 ## Install

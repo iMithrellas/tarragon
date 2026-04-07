@@ -20,7 +20,7 @@ func TestUIServer_AckAndUpdateOverUDS(t *testing.T) {
 
 	dir := t.TempDir()
 	plugName := "plug_oncall"
-	entry := writeScript(t, dir, "once.sh", "#!/usr/bin/env bash\nif [[ \"$1\" == \"--once\" ]]; then echo '{\"ok\":true,\"data\":\"pong\"}'; fi\n")
+	entry := writeScript(t, dir, "once.sh", "#!/usr/bin/env bash\nif [[ \"$1\" == \"tarragon\" && \"$2\" == \"query\" ]]; then echo '{\"ok\":true,\"data\":\"pong\"}'; fi\n")
 	mgr := plugins.NewManager("-")
 	mgr.Plugins[plugName] = &plugins.Plugin{Dir: dir, Config: plugins.PluginConfig{Name: plugName, Entrypoint: filepath.Base(entry), Enabled: true, Lifecycle: plugins.LifecycleOnCall}}
 
@@ -132,7 +132,7 @@ func TestUIServer_SelectAndDetachAck(t *testing.T) {
 	defer func() { _ = conn.Close() }()
 
 	scanner := wire.NewScanner(conn)
-	if err := wire.WriteMsg(conn, &wire.UIRequest{Type: "select", ClientID: "cli-test", QueryID: "q-1", Plugin: "plug_connected", ID: "id-123"}); err != nil {
+	if err := wire.WriteMsg(conn, &wire.UIRequest{Type: "select", ClientID: "cli-test", QueryID: "q-1", Plugin: "plug_connected", ID: "id-123", Action: "open"}); err != nil {
 		t.Fatalf("write select: %v", err)
 	}
 	var okMsg map[string]any
@@ -145,7 +145,7 @@ func TestUIServer_SelectAndDetachAck(t *testing.T) {
 
 	select {
 	case msg := <-reqOut:
-		if msg.name != "plug_connected" || msg.queryID != "q-1" || msg.msgType != wire.MsgSelect || msg.text != "id-123" {
+		if msg.name != "plug_connected" || msg.queryID != "q-1" || msg.msgType != wire.MsgSelect || msg.resultID != "id-123" || msg.action != "open" {
 			t.Fatalf("unexpected forwarded select: %+v", msg)
 		}
 	case <-time.After(time.Second):
@@ -178,5 +178,87 @@ func TestUIServer_SelectAndDetachAck(t *testing.T) {
 	}
 	if okMsg["type"] != "ok" {
 		t.Fatalf("unexpected detach ack: %+v", okMsg)
+	}
+}
+
+func TestUIServer_OnCallSelectInvokesCLI(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	dir := t.TempDir()
+	plugName := "plug_oncall_select"
+	entry := writeScript(t, dir, "select.sh", "#!/usr/bin/env bash\nif [[ \"$1\" == \"tarragon\" && \"$2\" == \"select\" && \"$3\" == \"img-42\" && \"$4\" == \"open\" ]]; then echo '{\"success\":true,\"message\":\"opened\"}'; exit 0; fi\nexit 1\n")
+	mgr := plugins.NewManager("-")
+	mgr.Plugins[plugName] = &plugins.Plugin{Dir: dir, Config: plugins.PluginConfig{Name: plugName, Entrypoint: filepath.Base(entry), Enabled: true, Lifecycle: plugins.LifecycleOnCall}}
+
+	store := newAggregateStore(10, "global", nil, 0.3)
+	uiReg := newUIRegistry()
+	reqOut := make(chan pluginRequest, 16)
+	plugReg := &pluginRegistry{conns: map[string]net.Conn{}, scanners: map[string]*bufio.Scanner{}}
+
+	go startUIServer(ctx, mgr, reqOut, plugReg, store, uiReg, nil)
+
+	deadline := time.Now().Add(3 * time.Second)
+	var conn net.Conn
+	var err error
+	for time.Now().Before(deadline) {
+		conn, err = net.Dial("unix", wire.SocketUI)
+		if err == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("dial ui socket: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	scanner := wire.NewScanner(conn)
+	if err := wire.WriteMsg(conn, &wire.UIRequest{Type: "select", ClientID: "cli-test", Plugin: plugName, ResultID: "img-42", Action: "open"}); err != nil {
+		t.Fatalf("write select: %v", err)
+	}
+
+	var msg map[string]json.RawMessage
+	gotOK := false
+	gotSelectResponse := false
+	deadline = time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := wire.ReadMsg(scanner, &msg); err != nil {
+			t.Fatalf("read message: %v", err)
+		}
+		var typ string
+		if err := json.Unmarshal(msg["type"], &typ); err != nil {
+			continue
+		}
+		switch typ {
+		case "ok":
+			gotOK = true
+		case wire.MsgSelectResponse:
+			var resp wire.SelectResponse
+			b, _ := json.Marshal(msg)
+			if err := json.Unmarshal(b, &resp); err != nil {
+				t.Fatalf("unmarshal select response: %v", err)
+			}
+			if !resp.Success || resp.Message != "opened" {
+				t.Fatalf("unexpected select response: %+v", resp)
+			}
+			gotSelectResponse = true
+		}
+		if gotOK && gotSelectResponse {
+			break
+		}
+	}
+
+	if !gotOK {
+		t.Fatalf("expected immediate ok ack")
+	}
+	if !gotSelectResponse {
+		t.Fatalf("expected select_response from on-call plugin invocation")
+	}
+
+	select {
+	case forwarded := <-reqOut:
+		t.Fatalf("did not expect forwarded select for on_call plugin: %+v", forwarded)
+	default:
 	}
 }

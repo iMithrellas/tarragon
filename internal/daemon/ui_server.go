@@ -150,6 +150,9 @@ func handleUIClient(ctx context.Context, conn net.Conn, mgr *plugins.Manager, re
 		case "select":
 			selectedID := parsed.ID
 			if selectedID == "" {
+				selectedID = parsed.ResultID
+			}
+			if selectedID == "" {
 				selectedID = parsed.Text
 			}
 			if frecencyDB != nil && parsed.Plugin != "" && selectedID != "" {
@@ -164,7 +167,27 @@ func handleUIClient(ctx context.Context, conn net.Conn, mgr *plugins.Manager, re
 				}(parsed.Plugin, selectedID)
 			}
 			if parsed.Plugin != "" && parsed.QueryID != "" && pluginsReg.isConnected(parsed.Plugin) {
-				reqOut <- pluginRequest{name: parsed.Plugin, queryID: parsed.QueryID, text: selectedID, msgType: wire.MsgSelect}
+				reqOut <- pluginRequest{name: parsed.Plugin, queryID: parsed.QueryID, resultID: selectedID, action: parsed.Action, msgType: wire.MsgSelect}
+			} else if parsed.Plugin != "" {
+				mgr.RLock()
+				plug, ok := mgr.Plugins[parsed.Plugin]
+				var snapDir string
+				var snapCfg plugins.PluginConfig
+				if ok {
+					snapDir = plug.Dir
+					snapCfg = plug.Config
+				}
+				mgr.RUnlock()
+
+				if ok && snapCfg.Enabled && snapCfg.Lifecycle == plugins.LifecycleOnCall && selectedID != "" {
+					pctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+					resp, err := invokeOnCallSelect(pctx, &plugins.Plugin{Dir: snapDir, Config: snapCfg}, selectedID, parsed.Action)
+					cancel()
+					if err != nil {
+						resp = wire.SelectResponse{Type: wire.MsgSelectResponse, Success: false, Message: err.Error()}
+					}
+					ui.publish(&resp)
+				}
 			}
 			_ = wire.WriteMsg(conn, map[string]any{"type": "ok"})
 			continue
@@ -382,7 +405,7 @@ func dispatchQuery(ctx context.Context, queryText, qid string, mgr *plugins.Mana
 		}
 		t0 := time.Now()
 		pctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-		raw, err := invokeOnCall(pctx, &plugins.Plugin{Dir: snap.dir, Config: snap.cfg}, queryText)
+		raw, err := invokeOnCallQuery(pctx, &plugins.Plugin{Dir: snap.dir, Config: snap.cfg}, queryText)
 		cancel()
 		if err != nil {
 			raw = json.RawMessage([]byte(fmt.Sprintf(`{"error":"%s"}`, escapeJSONString(err.Error()))))

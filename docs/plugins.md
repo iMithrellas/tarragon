@@ -6,7 +6,7 @@ Plugins declare a lifecycle in `plugin.toml`, and Tarragon runs them according t
 
 1. `daemon`: a persistent process speaking NDJSON over a Unix Domain Socket.
 2. `on_demand_persistent`: a persistent process that Tarragon starts on first use, then keeps running until the daemon shuts down or the plugin is stopped.
-3. `on_call`: a one-shot executable invoked as `entrypoint --once <text>`.
+3. `on_call`: an ephemeral CLI plugin invoked as `entrypoint tarragon <subcommand>`.
 
 ## Directory Layout and Install
 
@@ -54,7 +54,7 @@ icon = "calc.png"  # Optional: Icon path
 Lifecycle modes:
 - `daemon`: started by the daemon at startup and kept running.
 - `on_demand_persistent`: started when a matching query needs the plugin and kept running afterward.
-- `on_call`: executed per request via `--once` and expected to print one JSON payload to stdout.
+- `on_call`: executed per request via `tarragon query <text>`.
 
 Entrypoint path rules:
 - Relative `entrypoint`: resolved from the plugin directory (`~/.local/lib/tarragon/plugins/<name>/...`).
@@ -129,17 +129,23 @@ for line in reader.lines() {
 }
 ```
 
-## On-Call CLI (`--once`)
+## On-Call CLI Contract
 
-If your plugin uses `lifecycle_mode = "on_call"`, Tarragon runs it as a simple one-shot command:
+If your plugin uses `lifecycle_mode = "on_call"`, Tarragon invokes CLI subcommands under `tarragon`:
 
 ```
-$ my_plugin --once "hello world"
+$ my_plugin tarragon query "hello world"
 {"input":"hello world","variants":["HELLO WORLD","Hello World","world hello"]}
 ```
 
-- Tarragon runs `entrypoint --once <text>` and expects a single JSON object on stdout.
-- Stderr is captured for logging; non-zero exit will be surfaced as an error payload.
+- Query command: `entrypoint tarragon query <text>`
+  - stdout: one JSON payload (same shape rules as persistent plugin `data`)
+  - non-zero exit: treated as plugin error
+- Select command: `entrypoint tarragon select <result-id> [action]`
+  - used when user executes a result action for this plugin
+  - plugin should act based on `result-id` (on-call plugins are ephemeral and should not rely on in-memory query state)
+  - exit status controls success/failure
+  - optional stdout JSON: `{ "success": true|false, "message": "..." }`
 
 ## Result Shape
 
@@ -194,7 +200,7 @@ Your Makefile must define the following targets:
 check-deps:   # verify required toolchain (e.g., python3 or cargo/rustc)
 install:      # build and copy files into ~/.local/lib/tarragon/plugins/<name>/
 uninstall:    # remove installed files from the plugin directory
-run:          # local quick test (e.g., --once "Hello")
+run:          # local quick test (e.g., tarragon query "Hello")
 ```
 
 Tarragon's install flow currently:
@@ -225,7 +231,7 @@ uninstall:
 	@rm -rf $(INSTALL_ROOT)
 
 run:
-	@python3 my_plugin.py --once "Hello Tarragon"
+	@python3 my_plugin.py tarragon query "Hello Tarragon"
 ```
 
 ## Logging
@@ -238,4 +244,4 @@ run:
 
 - Treat input as untrusted; validate/escape as needed in shell calls.
 - Avoid expensive initialization in per-request paths; prefer a persistent lifecycle when the plugin is queried often.
-- Keep stdout strictly for protocol JSON in `--once` mode.
+- For `on_call` plugins, keep stdout strictly for JSON responses from Tarragon subcommands.
