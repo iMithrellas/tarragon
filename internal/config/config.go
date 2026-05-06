@@ -19,7 +19,6 @@ const (
 	FormatTOML ConfigFormat = "toml"
 	FormatYAML ConfigFormat = "yaml"
 	FormatJSON ConfigFormat = "json"
-	FormatINI  ConfigFormat = "ini"
 )
 
 type ConfigOption struct {
@@ -82,7 +81,7 @@ func SetupEnvironment() {
 }
 
 func FindConfigFile(dir string) (string, error) {
-	formats := []string{"toml", "yaml", "yml", "json", "ini"}
+	formats := []string{"toml", "yaml", "yml", "json"}
 	baseName := "tarragon"
 
 	var found []string
@@ -211,8 +210,6 @@ func GenerateConfig(path string, format ConfigFormat) error {
 		if err != nil {
 			return fmt.Errorf("error generating JSON: %w", err)
 		}
-	case FormatINI:
-		content = generateINI(options)
 	default:
 		return fmt.Errorf("unsupported format: %s", format)
 	}
@@ -268,17 +265,6 @@ func generateJSON(options []ConfigOption) (string, error) {
 	return string(data), nil
 }
 
-func generateINI(options []ConfigOption) string {
-	var sb strings.Builder
-	sb.WriteString("[default]\n")
-	for _, opt := range options {
-		fmt.Fprintf(&sb, "; %s\n", opt.Comment)
-		sb.WriteString(formatINIValue(opt.Key, opt.Value))
-		sb.WriteString("\n")
-	}
-	return sb.String()
-}
-
 func formatTOMLValue(key string, value interface{}) string {
 	switch v := value.(type) {
 	case string:
@@ -299,10 +285,6 @@ func formatYAMLValue(key string, value interface{}) string {
 	default:
 		return fmt.Sprintf("%s: \"%v\"", key, v)
 	}
-}
-
-func formatINIValue(key string, value interface{}) string {
-	return fmt.Sprintf("%s = %v", key, value)
 }
 
 // WritePluginOverride updates [plugins.<name>] keys and writes config while

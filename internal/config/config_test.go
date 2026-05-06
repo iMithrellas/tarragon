@@ -9,7 +9,6 @@ import (
 
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
-	"gopkg.in/ini.v1"
 	"gopkg.in/yaml.v3"
 )
 
@@ -50,7 +49,7 @@ func TestGenerateConfigMultipleFormats(t *testing.T) {
 	dir := t.TempDir()
 	configDir := filepath.Join(dir, "tarragon")
 
-	formats := []ConfigFormat{FormatTOML, FormatYAML, FormatJSON, FormatINI}
+	formats := []ConfigFormat{FormatTOML, FormatYAML, FormatJSON}
 
 	for _, format := range formats {
 		t.Run(string(format), func(t *testing.T) {
@@ -106,13 +105,6 @@ func TestGeneratedConfigValidity(t *testing.T) {
 				}
 				var config map[string]interface{}
 				return json.Unmarshal(data, &config)
-			},
-		},
-		{
-			format: FormatINI,
-			validate: func(path string) error {
-				_, err := ini.Load(path)
-				return err
 			},
 		},
 	}

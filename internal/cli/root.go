@@ -132,7 +132,7 @@ func init() {
 	rootCmd.CompletionOptions.DisableDefaultCmd = true
 	// Global persistent flags
 	rootCmd.PersistentFlags().String("config-dir", "", "Config directory (default: XDG config/tarragon)")
-	rootCmd.PersistentFlags().String("config-format", "toml", "Config format for generation")
+	rootCmd.PersistentFlags().String("config-format", "toml", "Config format for generation: toml, yaml, or json")
 	_ = viper.BindPFlag("config_dir", rootCmd.PersistentFlags().Lookup("config-dir"))
 	_ = viper.BindPFlag("config_format", rootCmd.PersistentFlags().Lookup("config-format"))
 

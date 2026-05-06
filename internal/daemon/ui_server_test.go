@@ -24,7 +24,7 @@ func TestUIServer_AckAndUpdateOverUDS(t *testing.T) {
 	plugName := "plug_oncall"
 	entry := writeScript(t, dir, "once.sh", "#!/usr/bin/env bash\nif [[ \"$1\" == \"tarragon\" && \"$2\" == \"query\" ]]; then echo '{\"ok\":true,\"data\":\"pong\"}'; fi\n")
 	mgr := plugins.NewManager("-")
-	mgr.Plugins[plugName] = &plugins.Plugin{Dir: dir, Config: plugins.PluginConfig{Name: plugName, Entrypoint: filepath.Base(entry), Enabled: true, Lifecycle: plugins.LifecycleOnCall}}
+	mgr.Plugins[plugName] = &plugins.Plugin{Dir: dir, Config: plugins.PluginConfig{Name: plugName, Entrypoint: filepath.Base(entry), Enabled: true, Lifecycle: plugins.LifecycleOnCall, ProvidesGeneral: true}}
 
 	store := newAggregateStore(10, "global", nil, 0.3)
 	uiReg := newUIRegistry()

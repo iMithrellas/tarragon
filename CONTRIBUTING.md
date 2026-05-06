@@ -74,7 +74,7 @@ Testing
 - You can also rely on the pre-commit go-unit-tests hook; it will run tests on commit.
 
 Project build/run tips
-- Config: `just config-generate --config-format toml` (or yaml, json, ini).
+- Config: `just config-generate --config-format toml` (or yaml, json).
 - DB: SQLite file path defaults to `$XDG_STATE_HOME/tarragon/tarragon.db` (or `~/.local/state/tarragon/tarragon.db`).
 - Completions: `just completions bash` (or zsh, fish, powershell).
 
