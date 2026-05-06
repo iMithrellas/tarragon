@@ -46,11 +46,6 @@ func GetConfigOptions() []ConfigOption {
 			Comment: "Reserved TCP port setting for future server support",
 		},
 		{
-			Key:     "tuidebounce",
-			Value:   200,
-			Comment: "TUI debounce interval in milliseconds",
-		},
-		{
 			Key:     "max_aggregates",
 			Value:   64,
 			Comment: "Maximum number of aggregates to maintain",

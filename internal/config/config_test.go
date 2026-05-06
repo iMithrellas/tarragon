@@ -152,7 +152,6 @@ func TestGeneratedConfigValues(t *testing.T) {
 		{"run_tcp", func() interface{} { return viper.GetBool("run_tcp") }, false},
 		{"run_ipc", func() interface{} { return viper.GetBool("run_ipc") }, true},
 		{"port", func() interface{} { return viper.GetString("port") }, "5555"},
-		{"tuidebounce", func() interface{} { return viper.GetInt("tuidebounce") }, 200},
 		{"max_aggregates", func() interface{} { return viper.GetInt("max_aggregates") }, 64},
 		{"frecency_weight", func() interface{} { return viper.GetFloat64("frecency_weight") }, 0.3},
 	}

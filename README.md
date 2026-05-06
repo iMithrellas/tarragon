@@ -6,7 +6,7 @@ A highly extensible automation and interaction framework with a language-agnosti
 
 ## Core Purpose
 
-- **Primary**: Provide a fast, lightweight core that aggregates and routes requests/responses between plugins and frontends (CLI, TUI, GUI, or custom).
+- **Primary**: Provide a fast, lightweight core that aggregates and routes requests/responses between plugins and external frontends (CLI, GUI, or custom).
 - **Secondary**: Enable easy plugin development in any language through a well-defined IPC protocol (Unix Domain Sockets + NDJSON), supporting rich use-cases like:
   - application launching (one of the original use cases)
   - calculations and unit conversions

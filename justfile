@@ -106,11 +106,6 @@ test-cover:
 
 # ─── Benchmarks ───────────────────────────────────────────────────
 
-# Run the interactive benchmark TUI (requires daemon running)
-[doc("Launch benchmark TUI against running daemon")]
-bench *FLAGS:
-    {{ build_output }} bench {{ FLAGS }}
-
 # Run Go benchmarks (unit-level)
 [doc("Run Go benchmark functions in all packages")]
 go-bench *FLAGS:
@@ -233,11 +228,6 @@ clean:
 [doc("Run go mod tidy")]
 tidy:
     go mod tidy
-
-# Run the TUI (requires daemon running)
-[doc("Launch the TUI client")]
-tui:
-    {{ build_output }} tui
 
 # Run the daemon in the foreground (useful for development)
 [doc("Run daemon in foreground for development")]

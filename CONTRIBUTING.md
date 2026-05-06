@@ -6,7 +6,7 @@ Quick start
 - Prereqs: Go 1.24+, [just](https://just.systems), pre-commit, git, systemd (for the user service).
 - Fork and clone the repo, then create a feature branch.
 - Install hooks: `just setup-precommit`; run all checks once: `just lint`.
-- Build: `just build`. Run TUI/daemon: `just tui` or `just daemon`.
+- Build: `just build`. Run daemon: `just daemon`.
 - See all recipes: `just` (with no arguments).
 
 Justfile recipes
@@ -30,7 +30,6 @@ Testing & benchmarks
 - `just test`: Run all Go tests.
 - `just test-race`: Run tests with the race detector.
 - `just test-cover`: Generate a coverage report.
-- `just bench`: Launch the interactive benchmark TUI (daemon must be running).
 - `just go-bench`: Run Go-level benchmark functions.
 
 Linting & formatting
