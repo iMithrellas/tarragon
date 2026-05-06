@@ -106,6 +106,11 @@ test-cover:
 
 # ─── Benchmarks ───────────────────────────────────────────────────
 
+# Run plugin benchmark through the daemon UI socket
+[doc("Run plugin benchmark against running daemon")]
+bench *FLAGS: build
+    {{ build_output }} bench {{ FLAGS }}
+
 # Run Go benchmarks (unit-level)
 [doc("Run Go benchmark functions in all packages")]
 go-bench *FLAGS:

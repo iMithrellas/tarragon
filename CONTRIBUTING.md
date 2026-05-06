@@ -30,6 +30,7 @@ Testing & benchmarks
 - `just test`: Run all Go tests.
 - `just test-race`: Run tests with the race detector.
 - `just test-cover`: Generate a coverage report.
+- `just bench`: Run the plugin benchmark command against a running daemon.
 - `just go-bench`: Run Go-level benchmark functions.
 
 Linting & formatting

@@ -45,6 +45,10 @@ Plugins can be invoked directly or contextually, and can expose commands, values
 - **Dispatch Controls**: `require_prefix` gates prefix-only plugins, while `provides_general_suggestions` is the general-suggestion eligibility contract for global/unprefixed fan-out.
 - **Optional Prefixes**: Prefixes (e.g., `@search`) can still force explicit dispatch to a specific plugin.
 
+### Plugin Benchmarking
+- `tarragon bench` connects to the daemon like an external frontend, sends benchmark queries through the UI socket, and prints plugin latency results as a table.
+- Run it with `just bench` while the daemon is running.
+
 ### Plugin Installation & Security
 - **Location**: Plugins reside in `~/.local/lib/tarragon/plugins/`.
 - **Install Sources**:
