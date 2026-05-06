@@ -3,14 +3,25 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
-	"text/tabwriter"
+	"sort"
+	"time"
 
 	"github.com/iMithrellas/tarragon/internal/plugins"
+	"github.com/iMithrellas/tarragon/internal/texttable"
+	"github.com/iMithrellas/tarragon/internal/wire"
 	"github.com/pelletier/go-toml/v2"
 	"github.com/spf13/cobra"
 )
+
+type installedPlugin struct {
+	Name          string `toml:"name"`
+	Description   string `toml:"description"`
+	LifecycleMode string `toml:"lifecycle_mode"`
+	Enabled       bool   `toml:"enabled"`
+}
 
 var listPluginsCmd = &cobra.Command{
 	Use:   "list",
@@ -32,12 +43,8 @@ var listPluginsCmd = &cobra.Command{
 			return fmt.Errorf("read plugin directory: %w", err)
 		}
 
-		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-		if _, err := fmt.Fprintln(w, "NAME\tDESCRIPTION\tLIFECYCLE_MODE\tENABLED"); err != nil {
-			return err
-		}
-
-		found := false
+		loaded, daemonAvailable := loadedPluginsFromDaemon(750 * time.Millisecond)
+		installed := make([]installedPlugin, 0, len(entries))
 		for _, entry := range entries {
 			if !entry.IsDir() {
 				continue
@@ -49,12 +56,7 @@ var listPluginsCmd = &cobra.Command{
 				continue
 			}
 
-			var cfg struct {
-				Name          string `toml:"name"`
-				Description   string `toml:"description"`
-				LifecycleMode string `toml:"lifecycle_mode"`
-				Enabled       bool   `toml:"enabled"`
-			}
+			var cfg installedPlugin
 			if err := toml.Unmarshal(data, &cfg); err != nil {
 				continue
 			}
@@ -63,19 +65,66 @@ var listPluginsCmd = &cobra.Command{
 				cfg.Name = entry.Name()
 			}
 
-			if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%t\n", cfg.Name, cfg.Description, cfg.LifecycleMode, cfg.Enabled); err != nil {
-				return err
-			}
-			found = true
+			installed = append(installed, cfg)
 		}
 
-		if !found {
+		if len(installed) == 0 {
 			if _, err := fmt.Fprintln(cmd.OutOrStdout(), "No plugins installed."); err != nil {
 				return err
 			}
 			return nil
 		}
 
-		return w.Flush()
+		sort.Slice(installed, func(i, j int) bool { return installed[i].Name < installed[j].Name })
+		rows := make([][]string, 0, len(installed))
+		for _, cfg := range installed {
+			loadedValue := "unknown"
+			if daemonAvailable {
+				_, ok := loaded[cfg.Name]
+				loadedValue = fmt.Sprintf("%t", ok)
+			}
+			rows = append(rows, []string{
+				cfg.Name,
+				cfg.Description,
+				cfg.LifecycleMode,
+				fmt.Sprintf("%t", cfg.Enabled),
+				loadedValue,
+			})
+		}
+
+		texttable.Render(cmd.OutOrStdout(), []texttable.Column{
+			{Header: "NAME"},
+			{Header: "DESCRIPTION"},
+			{Header: "LIFECYCLE_MODE"},
+			{Header: "ENABLED", AlignRight: true},
+			{Header: "LOADED", AlignRight: true},
+		}, rows)
+		return nil
 	},
+}
+
+func loadedPluginsFromDaemon(timeout time.Duration) (map[string]wire.PluginInfo, bool) {
+	conn, err := net.DialTimeout("unix", wire.SocketUI, timeout)
+	if err != nil {
+		return nil, false
+	}
+	defer func() { _ = conn.Close() }()
+
+	if err := wire.WriteMsg(conn, &wire.UIRequest{Type: wire.MsgStatus, ClientID: "plugin-list"}); err != nil {
+		return nil, false
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		return nil, false
+	}
+
+	var status wire.StatusResponse
+	if err := wire.ReadMsg(wire.NewScanner(conn), &status); err != nil || status.Type != wire.MsgStatus {
+		return nil, false
+	}
+
+	loaded := make(map[string]wire.PluginInfo, len(status.Plugins))
+	for _, info := range status.Plugins {
+		loaded[info.Name] = info
+	}
+	return loaded, true
 }

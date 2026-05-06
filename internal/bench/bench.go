@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/iMithrellas/tarragon/internal/texttable"
 	"github.com/iMithrellas/tarragon/internal/wire"
 )
 
@@ -412,7 +413,16 @@ func printSummary(w io.Writer, stats map[string]*benchStats, opts options) {
 }
 
 func printTable(w io.Writer, names []string, stats map[string]*benchStats, worstPct float64) {
-	headers := []string{"Plugin", "Runs", "Avg ms", "Min ms", "Max ms", fmt.Sprintf("P%.0f ms", worstPct), "Timeouts", "Errors"}
+	columns := []texttable.Column{
+		{Header: "Plugin"},
+		{Header: "Runs", AlignRight: true},
+		{Header: "Avg ms", AlignRight: true},
+		{Header: "Min ms", AlignRight: true},
+		{Header: "Max ms", AlignRight: true},
+		{Header: fmt.Sprintf("P%.0f ms", worstPct), AlignRight: true},
+		{Header: "Timeouts", AlignRight: true},
+		{Header: "Errors", AlignRight: true},
+	}
 	rows := make([][]string, 0, len(names))
 	for _, name := range names {
 		st := stats[name]
@@ -428,47 +438,7 @@ func printTable(w io.Writer, names []string, stats map[string]*benchStats, worst
 		})
 	}
 
-	widths := make([]int, len(headers))
-	for i, h := range headers {
-		widths[i] = len(h)
-	}
-	for _, row := range rows {
-		for i, cell := range row {
-			if len(cell) > widths[i] {
-				widths[i] = len(cell)
-			}
-		}
-	}
-
-	printRow(w, headers, widths)
-	printSeparator(w, widths)
-	for _, row := range rows {
-		printRow(w, row, widths)
-	}
-}
-
-func printRow(w io.Writer, cells []string, widths []int) {
-	for i, cell := range cells {
-		if i > 0 {
-			fmt.Fprint(w, "  ")
-		}
-		if i == 0 {
-			fmt.Fprintf(w, "%-*s", widths[i], cell)
-			continue
-		}
-		fmt.Fprintf(w, "%*s", widths[i], cell)
-	}
-	fmt.Fprintln(w)
-}
-
-func printSeparator(w io.Writer, widths []int) {
-	for i, width := range widths {
-		if i > 0 {
-			fmt.Fprint(w, "  ")
-		}
-		fmt.Fprint(w, strings.Repeat("-", width))
-	}
-	fmt.Fprintln(w)
+	texttable.Render(w, columns, rows)
 }
 
 func avgMs(st *benchStats) float64 {
