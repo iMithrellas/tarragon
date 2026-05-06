@@ -148,6 +148,19 @@ fn main() {
     log("initializing");
     let args: Vec<_> = env::args().skip(1).collect();
 
+    if args.len() >= 3 && args[0] == "tarragon" && args[1] == "query" {
+        let text = args[2..].join(" ");
+        let v = process(&text);
+        println!(
+            "{{\"input\":{},\"variants\":[{},{},{}]}}",
+            json_str(&text),
+            json_str(&v[0]),
+            json_str(&v[1]),
+            json_str(&v[2])
+        );
+        return;
+    }
+
     if args.len() >= 2 && args[0] == "--once" {
         let text = args[1..].join(" ");
         let v = process(&text);

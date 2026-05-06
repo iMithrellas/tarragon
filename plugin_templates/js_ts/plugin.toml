@@ -1,0 +1,11 @@
+name = "template_js_ts"
+description = "Template JavaScript/TypeScript plugin that returns three transformed variants of the input."
+enabled = true
+entrypoint = "template_plugin.js"
+lifecycle_mode = "daemon"
+
+provides_general_suggestions = true
+prefix = "@tjs"
+build_dependencies = ["node"]
+capabilities = ["suggest"]
+icon = ""

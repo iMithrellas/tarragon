@@ -1,4 +1,4 @@
-Template Python Plugin for Tarragon
+# Template Python Plugin for Tarragon
 
 Overview
 - Logs initialization, startup, request/response handling, and selection events.
@@ -6,7 +6,7 @@ Overview
 - CLI test: `make run` or `python3 template_plugin.py tarragon query "Hello"`.
 
 Install
- - `make install` installs to `~/.local/lib/tarragon/plugins/template_python/`.
+- `make install` installs to `~/.local/lib/tarragon/plugins/template_python/`.
 
 Runtime
 - Name: taken from `plugin.toml` (`name = ...`) and passed via `TARRAGON_PLUGIN_NAME` env var.

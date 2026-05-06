@@ -1,0 +1,11 @@
+name = "template_c"
+description = "Template C plugin that returns three transformed variants of the input."
+enabled = true
+entrypoint = "template_c"
+lifecycle_mode = "daemon"
+
+provides_general_suggestions = true
+prefix = "@tc"
+build_dependencies = ["cc"]
+capabilities = ["suggest"]
+icon = ""

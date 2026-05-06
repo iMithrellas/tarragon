@@ -1,0 +1,11 @@
+name = "template_go"
+description = "Template Go plugin that returns three transformed variants of the input."
+enabled = true
+entrypoint = "template_go"
+lifecycle_mode = "daemon"
+
+provides_general_suggestions = true
+prefix = "@tgo"
+build_dependencies = ["go"]
+capabilities = ["suggest"]
+icon = ""

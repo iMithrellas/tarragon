@@ -41,10 +41,15 @@ Linting & formatting
 - `just check`: Full CI-like check (fmt + lint + test + build).
 
 Plugins
-- `just plugin-install <name>`: Install a plugin (e.g., `just plugin-install calc_python`).
-- `just plugin-uninstall <name>`: Uninstall a plugin.
-- `just plugin-run <name>`: Quick-test a plugin locally.
-- `just plugin-install-all`: Install every plugin in plugins/.
+- `just plugin-install <name>`: Install a bundled plugin from `plugins/` (e.g., `just plugin-install calc_python`).
+- `just plugin-uninstall <name>`: Uninstall a bundled plugin.
+- `just plugin-run <name>`: Quick-test a bundled plugin locally.
+- `just plugin-install-all`: Install every bundled plugin in `plugins/`.
+- `just template-run <name>`: Quick-test a template plugin from `plugin_templates/`.
+- `just template-check <name>`: Check dependencies for a template plugin.
+- `just template-install <name>`: Install a template plugin for manual experimentation.
+- `just template-install-all`: Install every template plugin from `plugin_templates/`.
+- `just template-uninstall-all`: Uninstall every template plugin from `plugin_templates/`.
 
 Notes
 - `just run` will restart your user service; ensure your unit in systemd/tarragon.service is as you expect.

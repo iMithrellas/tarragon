@@ -1,4 +1,4 @@
-Template Rust Plugin for Tarragon
+# Template Rust Plugin for Tarragon
 
 Overview
 - Logs initialization, startup, request/response handling, and selection events.

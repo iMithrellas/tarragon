@@ -30,8 +30,14 @@ build
 # Go local build cache
 .gocache/
 
-# Rust build outputs in template plugin
+# Rust build outputs in template plugins
+plugin_templates/rust/target/
 plugins/template_rust/target/
+
+# Template plugin build outputs
+plugin_templates/go/template_go
+plugin_templates/c/template_c
+plugin_templates/cpp/template_cpp
 
 # Go plugin build outputs
 plugins/file_finder/file_finder

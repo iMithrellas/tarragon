@@ -12,6 +12,12 @@ Plugins declare a lifecycle in `plugin.toml`, and Tarragon runs them according t
 
 Plugins are managed under `~/.local/lib/tarragon/plugins/<plugin_name>/` and loaded by the daemon at startup.
 
+Repository layout note:
+
+- Bundled first-party plugins live in `plugins/`.
+- Authoring templates live in `plugin_templates/` and are intentionally separate from bundled plugins.
+- Template directories use the same `plugin.toml` + `Makefile` contract as installable plugin repositories.
+
 There are two supported plugin sources:
 
 1. **Plugin Git repository** (installed with `tarragon plugin install <git-url>`): the repository root must contain `plugin.toml` and a `Makefile`; `entrypoint` is typically a path relative to the installed plugin directory.

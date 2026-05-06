@@ -168,6 +168,19 @@ def run_daemon():
 
 
 def main(argv=None):
+    if argv is None:
+        argv = sys.argv[1:]
+    if len(argv) >= 3 and argv[0] == "tarragon" and argv[1] == "query":
+        text = " ".join(argv[2:])
+        try:
+            resp = process(text)
+            print(json.dumps({"input": text, "variants": resp}))
+            return 0
+        except Exception as e:
+            logger.exception("processing failed")
+            print(json.dumps({"error": str(e)}))
+            return 1
+
     parser = argparse.ArgumentParser(description="Tarragon Template Python Plugin")
     parser.add_argument("--once", metavar="TEXT", help="Process once and print JSON")
     args = parser.parse_args(argv)

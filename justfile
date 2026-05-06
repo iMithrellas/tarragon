@@ -165,28 +165,28 @@ setup-precommit:
 
 # ─── Plugins ──────────────────────────────────────────────────────
 
-# Install a plugin by directory name (e.g., just plugin-install calc_python)
-[doc("Install a plugin: just plugin-install <name>")]
+# Install a bundled plugin by directory name (e.g., just plugin-install calc_python)
+[doc("Install bundled plugin: just plugin-install <name>")]
 plugin-install name:
     make -C plugins/{{ name }} install
 
-# Uninstall a plugin by directory name
-[doc("Uninstall a plugin: just plugin-uninstall <name>")]
+# Uninstall a bundled plugin by directory name
+[doc("Uninstall bundled plugin: just plugin-uninstall <name>")]
 plugin-uninstall name:
     make -C plugins/{{ name }} uninstall
 
-# Quick-run a plugin locally (e.g., just plugin-run calc_python)
-[doc("Run a plugin in test mode: just plugin-run <name>")]
+# Quick-run a bundled plugin locally (e.g., just plugin-run calc_python)
+[doc("Run bundled plugin in test mode: just plugin-run <name>")]
 plugin-run name:
     make -C plugins/{{ name }} run
 
-# Check dependencies for a plugin
-[doc("Check a plugin's build dependencies")]
+# Check dependencies for a bundled plugin
+[doc("Check bundled plugin build dependencies")]
 plugin-check name:
     make -C plugins/{{ name }} check-deps
 
-# Install all plugins
-[doc("Install all plugins from plugins/")]
+# Install all bundled plugins
+[doc("Install all bundled plugins from plugins/")]
 plugin-install-all:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -194,6 +194,43 @@ plugin-install-all:
         name=$(basename "$dir")
         echo "=== Installing plugin: $name ==="
         make -C "$dir" install
+    done
+
+# Quick-run a template plugin locally (e.g., just template-run go)
+[doc("Run a template plugin in test mode: just template-run <name>")]
+template-run name:
+    make -C plugin_templates/{{ name }} run
+
+# Check dependencies for a template plugin
+[doc("Check template plugin build dependencies")]
+template-check name:
+    make -C plugin_templates/{{ name }} check-deps
+
+# Install a template plugin for manual experimentation
+[doc("Install template plugin: just template-install <name>")]
+template-install name:
+    make -C plugin_templates/{{ name }} install
+
+# Install all template plugins for manual experimentation
+[doc("Install all template plugins from plugin_templates/")]
+template-install-all:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for dir in plugin_templates/*/; do
+        name=$(basename "$dir")
+        echo "=== Installing template plugin: $name ==="
+        make -C "$dir" install
+    done
+
+# Uninstall all template plugins
+[doc("Uninstall all template plugins from plugin_templates/")]
+template-uninstall-all:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for dir in plugin_templates/*/; do
+        name=$(basename "$dir")
+        echo "=== Uninstalling template plugin: $name ==="
+        make -C "$dir" uninstall
     done
 
 # Install a remote plugin from a git URL

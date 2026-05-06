@@ -50,6 +50,8 @@ Plugins can be invoked directly or contextually, and can expose commands, values
 - Run it with `just bench` while the daemon is running.
 
 ### Plugin Installation & Security
+- **Bundled plugin sources**: First-party bundled plugins live in `plugins/`.
+- **Template plugin sources**: Authoring templates live separately in `plugin_templates/` so examples are not installed by bundled-plugin recipes.
 - **Location**: Plugins reside in `~/.local/lib/tarragon/plugins/`.
 - **Install Sources**:
     - `tarragon plugin install <git-url>` for plugin Git repositories with `plugin.toml` and a Makefile.

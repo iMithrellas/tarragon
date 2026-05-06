@@ -1,0 +1,11 @@
+name = "template_cpp"
+description = "Template C++ plugin that returns three transformed variants of the input."
+enabled = true
+entrypoint = "template_cpp"
+lifecycle_mode = "daemon"
+
+provides_general_suggestions = true
+prefix = "@tcpp"
+build_dependencies = ["c++"]
+capabilities = ["suggest"]
+icon = ""

@@ -24,4 +24,4 @@ uninstall:
 
 # Quick local test for the process() behavior
 run:
-	@python3 $(PLUGIN_DIR)/template_plugin.py --once "Hello Tarragon"
+	@python3 $(PLUGIN_DIR)/template_plugin.py tarragon query "Hello Tarragon"
