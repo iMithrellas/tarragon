@@ -34,17 +34,17 @@ func GetConfigOptions() []ConfigOption {
 		{
 			Key:     "run_tcp",
 			Value:   false,
-			Comment: "Enable TCP server",
+			Comment: "Reserved for future TCP server support; current daemon uses Unix sockets",
 		},
 		{
 			Key:     "run_ipc",
 			Value:   true,
-			Comment: "Enable IPC server",
+			Comment: "Enable UI Unix socket server",
 		},
 		{
 			Key:     "port",
 			Value:   "5555",
-			Comment: "TCP port to listen on",
+			Comment: "Reserved TCP port setting for future server support",
 		},
 		{
 			Key:     "tuidebounce",

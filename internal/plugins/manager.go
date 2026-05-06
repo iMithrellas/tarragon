@@ -148,7 +148,7 @@ func (m *Manager) DiscoverNew() error {
 			continue
 		}
 
-		var cfg PluginConfig
+		cfg := PluginConfig{ProvidesGeneral: true}
 		if err := toml.Unmarshal(data, &cfg); err != nil {
 			log.Printf("Invalid config for %s: %v", ent.Name(), err)
 			continue

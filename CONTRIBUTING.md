@@ -75,7 +75,7 @@ Testing
 
 Project build/run tips
 - Config: `just config-generate --config-format toml` (or yaml, json, ini).
-- DB: SQLite file path defaults to XDG_DATA_HOME/tarragon/tarragon.db (or ~/.local/share/tarragon/tarragon.db).
+- DB: SQLite file path defaults to `$XDG_STATE_HOME/tarragon/tarragon.db` (or `~/.local/state/tarragon/tarragon.db`).
 - Completions: `just completions bash` (or zsh, fish, powershell).
 
 Contribution workflow

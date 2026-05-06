@@ -199,12 +199,12 @@ plugin-install-all:
 # Install a remote plugin from a git URL
 [doc("Install remote plugin: just install-remote-plugin <url>")]
 install-remote-plugin url: build
-    {{ build_output }} install-plugin {{ url }}
+    {{ build_output }} plugin install {{ url }}
 
 # Uninstall a previously installed remote plugin by name
 [doc("Uninstall remote plugin: just uninstall-remote-plugin <name>")]
 uninstall-remote-plugin name: build
-    {{ build_output }} uninstall-plugin {{ name }}
+    {{ build_output }} plugin uninstall {{ name }}
 
 # ─── Shell Completions ───────────────────────────────────────────
 

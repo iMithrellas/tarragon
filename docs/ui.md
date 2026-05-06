@@ -24,7 +24,7 @@ This guide explains how to build a UI that talks to the Tarragon daemon over a U
    - Read NDJSON line: `{ "type": "ack", "query_id": "..." }\n`
    - Read NDJSON update lines: `{ "type": "update", "query_id": "...", "payload": <snapshot> }\n`
    - Replace your displayed snapshot with the latest one for that `query_id`.
-3) On exit, write NDJSON line `{ "type": "detach", "client_id": "<id>" }\n` (best‑effort) to let the daemon purge memory.
+3) On exit, write NDJSON line `{ "type": "detach", "client_id": "<id>" }\n` (best-effort) to let the daemon purge memory.
 
 NDJSON framing means each message is exactly one JSON object on one line, terminated by `\n`.
 
@@ -84,7 +84,7 @@ while True:
     if msg["type"] == "ack":
         print("query_id:", msg["query_id"])
     elif msg["type"] == "update":
-        print("snapshot:", json.dumps(json.loads(msg["payload"]), indent=2))
+        print("snapshot:", json.dumps(msg["payload"], indent=2))
 ```
 
 ## Example: Go

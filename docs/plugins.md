@@ -14,7 +14,7 @@ Plugins are managed under `~/.local/lib/tarragon/plugins/<plugin_name>/` and loa
 
 There are two supported plugin sources:
 
-1. **Local plugin directory** (installed with `tarragon plugin install`): `entrypoint` is typically a path relative to the plugin directory.
+1. **Plugin Git repository** (installed with `tarragon plugin install <git-url>`): the repository root must contain `plugin.toml` and a `Makefile`; `entrypoint` is typically a path relative to the installed plugin directory.
 2. **System plugin** (enabled with `tarragon plugin enable <name>`): Tarragon resolves the binary with `which <name>`, runs `<binary> tarragon manifest`, rewrites a relative `entrypoint` to the resolved absolute binary path, appends `source = "system"`, and stores the resulting manifest in Tarragon's plugin directory.
 
 ### System Plugin Enable + Reload Behavior
@@ -37,9 +37,9 @@ System-enabled manifests include:
 source = "system"
 ```
 
-If source metadata is surfaced in status/runtime payloads, treat it as origin metadata (`system` vs local/default). Clients should tolerate missing source metadata for compatibility with older runtimes.
+Status responses currently include source metadata when it is present in the manifest. Treat it as origin metadata (`system` vs local/default), and tolerate missing source metadata for local plugins or older manifests.
 
-- Required files:
+- Required files for plugin repositories installed with `tarragon plugin install`:
   - `plugin.toml` (configuration)
   - `entrypoint` executable (e.g., `my_plugin.py` or `my_plugin`)
   - `Makefile` with targets `check-deps`, `install`, `uninstall`, `run` (required)
@@ -76,7 +76,7 @@ icon = "calc.png"  # Optional: Icon path
 Lifecycle modes:
 - `daemon`: started by the daemon at startup and kept running.
 - `on_demand_persistent`: started when a matching query needs the plugin and kept running afterward.
-- `on_call`: executed per request via `tarragon query <text>`.
+- `on_call`: executed per request by running `entrypoint tarragon query <text>`.
 
 ## Dispatch Eligibility and Prefix Targeting
 
@@ -84,12 +84,12 @@ Tarragon supports both global (unprefixed) and explicit prefix-targeted dispatch
 
 - **Global/unprefixed query**:
   - `require_prefix = true` excludes a plugin from unprefixed dispatch.
-  - `provides_general_suggestions` is the contract field for general-suggestion eligibility. Older runtimes may still fan out to all non-`require_prefix` plugins.
+  - `provides_general_suggestions` is the contract field for general-suggestion eligibility. Current dispatch requires it to be true for unprefixed queries. For compatibility, discovered plugin manifests that omit the field default to true, but plugin authors should set it explicitly.
 - **Prefix-targeted query**: when input starts with a plugin prefix, Tarragon dispatches only to the matched plugin and forwards query text with the prefix removed.
   - Prefix-targeted dispatch does not depend on `provides_general_suggestions`.
   - If prefixes overlap, the longest matching prefix wins.
 
-Use `require_prefix` for strict prefix-only plugins. Use `provides_general_suggestions` as the explicit global-eligibility signal; clients should tolerate legacy runtimes where this flag is not yet enforced in dispatch.
+Use `require_prefix` for strict prefix-only plugins. Use `provides_general_suggestions` as the explicit global-eligibility signal.
 
 ## Lifecycle-Aware Status Expectations
 
@@ -173,7 +173,7 @@ for line in reader.lines() {
 
 ## On-Call CLI Contract
 
-If your plugin uses `lifecycle_mode = "on_call"`, Tarragon invokes CLI subcommands under `tarragon`:
+If your plugin uses `lifecycle_mode = "on_call"`, Tarragon invokes CLI subcommands on the plugin executable under the `tarragon` namespace:
 
 ```
 $ my_plugin tarragon query "hello world"
@@ -242,7 +242,7 @@ Your Makefile must define the following targets:
 check-deps:   # verify required toolchain (e.g., python3 or cargo/rustc)
 install:      # build and copy files into ~/.local/lib/tarragon/plugins/<name>/
 uninstall:    # remove installed files from the plugin directory
-run:          # local quick test (e.g., tarragon query "Hello")
+run:          # local quick test (e.g., ./my_plugin tarragon query "Hello")
 ```
 
 Tarragon's install flow currently:

@@ -8,7 +8,7 @@ A highly extensible automation and interaction framework with a language-agnosti
 
 - **Primary**: Provide a fast, lightweight core that aggregates and routes requests/responses between plugins and frontends (CLI, TUI, GUI, or custom).
 - **Secondary**: Enable easy plugin development in any language through a well-defined IPC protocol (Unix Domain Sockets + NDJSON), supporting rich use-cases like:
-  - application launching (roots of the project)
+  - application launching (one of the original use cases)
   - calculations and unit conversions
   - web/API integrations
   - clipboard or system utilities
@@ -28,27 +28,27 @@ Plugins can be invoked directly or contextually, and can expose commands, values
 ## Features
 
 ### Application Launcher
-- Parses `.desktop` files to find and launch installed applications.
+- Provided by the bundled `desktop_files` plugin, which parses `.desktop` files to find and launch installed applications.
 - Fuzzy search with user-configurable scoring.
 - Frecency-based sorting (frequency x recency).
 - Optional icon display (depending on UI backend).
 
 ### Plugin System
-- **Integrated Suggestions**: Seamlessly blends suggestions from installed applications and active plugins based on user input.
+- **Integrated Suggestions**: Seamlessly blends suggestions from eligible plugins, including bundled plugins for installed applications and other local tasks.
 - **Language Agnostic**: Plugins are external executables or scripts.
-- **Persistent Processes & IPC**: For responsiveness, plugins providing real-time suggestions typically run as persistent processes managed by the launcher daemon, communicating via efficient IPC (Unix Domain Sockets + NDJSON) or potentially via TCP (remote/containerized plugins). This avoids per-keystroke lag.
+- **Persistent Processes & IPC**: For responsiveness, plugins providing real-time suggestions typically run as persistent processes managed by the launcher daemon, communicating via efficient IPC (Unix Domain Sockets + NDJSON). TCP-related config exists as a future-facing placeholder, but the current daemon starts Unix socket IPC only. This avoids per-keystroke lag.
 - **Plugin Lifecycle Modes**: Plugins declare their required lifecycle:
     - `daemon`: Runs persistently alongside the launcher daemon (e.g., clipboard manager).
     - `on_demand_persistent`: Started when first needed for a query and kept running afterward.
     - `on_call`: Executed per request (ephemeral process lifecycle).
-- **Fan-Out/Gather for Suggestions**: Input is broadcast to the app searcher and all relevant running plugins concurrently. Results are gathered asynchronously and displayed.
+- **Fan-Out/Gather for Suggestions**: Input is broadcast to eligible plugins concurrently. Results are gathered asynchronously and displayed.
 - **Dispatch Controls**: `require_prefix` gates prefix-only plugins, while `provides_general_suggestions` is the general-suggestion eligibility contract for global/unprefixed fan-out.
 - **Optional Prefixes**: Prefixes (e.g., `@search`) can still force explicit dispatch to a specific plugin.
 
 ### Plugin Installation & Security
 - **Location**: Plugins reside in `~/.local/lib/tarragon/plugins/`.
 - **Install Sources**:
-    - `tarragon plugin install <git-url>` for local plugin directories managed by plugin Makefiles.
+    - `tarragon plugin install <git-url>` for plugin Git repositories with `plugin.toml` and a Makefile.
     - `tarragon plugin enable <name>` for system binaries exposing `tarragon manifest`.
 - **Build Standard**: Plugins requiring compilation must include a `Makefile` providing standardized targets:
     - `make check-deps`: Verifies necessary build tools are present. The launcher can use this to inform the user about requirements.
@@ -62,7 +62,7 @@ Plugins can be invoked directly or contextually, and can expose commands, values
 
 ## Plugin Configuration
 
-See [https://github.com/iMithrellas/tarragon/blob/master/docs/plugins.md](plugins.md).
+See [docs/plugins.md](docs/plugins.md).
 
 ## Contributing
 
@@ -121,7 +121,7 @@ graph TD
 (Run when explicitly invoked)"]
         SearchEngines["Example: Search Engines
         (Youtube/Wiki)"]
-        Socket{"IPC/TCP (UDS + NDJSON)"}
+        Socket{"IPC (UDS + NDJSON)"}
   end
  subgraph Daemon["TarraGon Daemon"]
         Core["Core Engine"]
@@ -134,7 +134,7 @@ graph TD
   end
  subgraph PluginInstall["Plugin Installation Process"]
         GitRepo["Git Repository"]
-        InstallCommand["tarragon plugin install URL"]
+        InstallCommand["tarragon plugin install <git-url>"]
         DepCheck["make check-deps"]
         MakeInstall["make install"]
         PluginDir["~/.local/lib/tarragon/plugins/"]
