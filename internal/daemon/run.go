@@ -5,7 +5,9 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/iMithrellas/tarragon/internal/db"
 	"github.com/iMithrellas/tarragon/internal/plugins"
@@ -20,6 +22,7 @@ func RunDaemon() {
 
 	pluginDir := plugins.DefaultDir()
 	mgr := plugins.NewManager(pluginDir)
+	mgr.SetStopTimeout(pluginStopTimeout())
 	// TODO: periodically rescan pluginDir for new plugins/config changes.
 	if err := mgr.Discover(); err != nil {
 		log.Printf("Plugin discovery error: %v", err)
@@ -78,4 +81,19 @@ func RunDaemon() {
 
 	<-ctx.Done()
 	log.Println("Daemon shutting down.")
+}
+
+// pluginStopTimeout resolves the configured plugin shutdown grace period,
+// falling back to the default when it is unset or unparseable.
+func pluginStopTimeout() time.Duration {
+	raw := strings.TrimSpace(viper.GetString("plugin_stop_timeout"))
+	if raw == "" {
+		return plugins.DefaultStopTimeout
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		log.Printf("Invalid plugin_stop_timeout %q; using %s", raw, plugins.DefaultStopTimeout)
+		return plugins.DefaultStopTimeout
+	}
+	return d
 }

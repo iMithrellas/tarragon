@@ -260,6 +260,7 @@ func handleUIClient(ctx context.Context, conn net.Conn, mgr *plugins.Manager, re
 				continue
 			}
 
+			var toStop []string
 			for name, p := range mgr.Plugins {
 				wasEnabled := beforeEnabled[name]
 				wasLifecycle := beforeLifecycle[name]
@@ -268,13 +269,13 @@ func handleUIClient(ctx context.Context, conn net.Conn, mgr *plugins.Manager, re
 
 				if !isEnabled {
 					if p.Running() {
-						p.Stop()
+						toStop = append(toStop, name)
 					}
 					continue
 				}
 
 				if wasLifecycle != isLifecycle && p.Running() {
-					p.Stop()
+					toStop = append(toStop, name)
 				}
 
 				if (!wasEnabled && isEnabled && isLifecycle == plugins.LifecycleDaemon) ||
@@ -284,6 +285,13 @@ func handleUIClient(ctx context.Context, conn net.Conn, mgr *plugins.Manager, re
 			}
 			mgr.Unlock()
 
+			// Stop after releasing the lock: plugins now get a grace period to
+			// exit, and holding the manager lock through it would block every
+			// concurrent query.
+			if len(toStop) > 0 {
+				mgr.StopPlugins(toStop)
+			}
+
 			if startPersistent {
 				if err := mgr.StartPersistent(ctx, wire.SocketPlugins); err != nil {
 					_ = wire.WriteMsg(conn, &wire.ReloadResponse{Type: "reload_response", Success: false, Message: fmt.Sprintf("reload applied, but failed to start daemon plugins: %v", err)})
@@ -292,6 +300,63 @@ func handleUIClient(ctx context.Context, conn net.Conn, mgr *plugins.Manager, re
 			}
 
 			_ = wire.WriteMsg(conn, &wire.ReloadResponse{Type: "reload_response", Success: true, Message: "configuration reloaded"})
+			continue
+		case "restart":
+			// Re-read manifests and overrides first so a restart also picks up
+			// plugins installed or reconfigured since the daemon started.
+			if err := viper.ReadInConfig(); err != nil {
+				log.Printf("[UI] restart: could not re-read config: %v", err)
+			}
+			mgr.Lock()
+			discoverErr := mgr.RefreshConfigs()
+			overrideErr := mgr.ApplyOverrides()
+			mgr.Unlock()
+			if discoverErr != nil {
+				log.Printf("[UI] restart: plugin discovery failed: %v", discoverErr)
+			}
+			if overrideErr != nil {
+				_ = wire.WriteMsg(conn, &wire.RestartResponse{
+					Type:    "restart_response",
+					Success: false,
+					Message: fmt.Sprintf("failed to apply config overrides: %v", overrideErr),
+				})
+				continue
+			}
+
+			var targets []string
+			if parsed.Plugin != "" {
+				targets = []string{parsed.Plugin}
+			}
+
+			results := mgr.Restart(ctx, wire.SocketPlugins, targets)
+
+			wireResults := make([]wire.RestartResult, 0, len(results))
+			failed := 0
+			restarted := 0
+			for _, r := range results {
+				if r.Status == plugins.RestartStatusError {
+					failed++
+				}
+				if r.Status == plugins.RestartStatusRestarted {
+					restarted++
+				}
+				wireResults = append(wireResults, wire.RestartResult{
+					Name:    r.Name,
+					Status:  r.Status,
+					Message: r.Message,
+				})
+			}
+
+			msg := fmt.Sprintf("restarted %d plugin(s)", restarted)
+			if failed > 0 {
+				msg = fmt.Sprintf("%s, %d failed", msg, failed)
+			}
+			_ = wire.WriteMsg(conn, &wire.RestartResponse{
+				Type:    "restart_response",
+				Success: failed == 0,
+				Message: msg,
+				Results: wireResults,
+			})
 			continue
 		case "query", "":
 			// handled below

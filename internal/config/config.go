@@ -65,6 +65,11 @@ func GetConfigOptions() []ConfigOption {
 			Value:   0.3,
 			Comment: "Blend weight for frecency in result scoring (0..1)",
 		},
+		{
+			Key:     "plugin_stop_timeout",
+			Value:   "5s",
+			Comment: "How long plugins may take to exit after SIGTERM before being killed",
+		},
 	}
 }
 

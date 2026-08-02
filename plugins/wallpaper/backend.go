@@ -6,10 +6,11 @@ package main
 //
 // A background surface must be owned by a process that outlives everything
 // else on the desktop. A Tarragon plugin is the opposite of that: the plugin
-// manager starts it as a child of the daemon and stops it with Process.Kill()
-// (SIGKILL, no graceful shutdown). If the wallpaper lived in this process,
-// every daemon restart, reload or crash would drop the surface and leave the
-// user staring at a black screen. Painting the background from a launcher
+// manager starts it as a child of the daemon and terminates it whenever the
+// daemon shuts down, reloads a lifecycle change, or the plugin is restarted.
+// Shutdown is graceful (SIGTERM first), but graceful or not the process still
+// exits, and with it the surface: every daemon restart would leave the user
+// staring at a black screen. Painting the background from a launcher
 // plugin also means reimplementing wl_output hotplug, per-output modes,
 // fractional scaling, viewporter, shm buffer pools and image decoding, in Go,
 // where the Wayland bindings are third-party and unproven.

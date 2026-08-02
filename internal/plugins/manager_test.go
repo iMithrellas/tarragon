@@ -190,3 +190,35 @@ func TestDiscoverNewAddsMissingWithoutOverwritingExisting(t *testing.T) {
 		t.Fatalf("unexpected added plugin entrypoint: %q", added.Config.Entrypoint)
 	}
 }
+
+func TestRefreshConfigsUpdatesManifestWithoutReplacingRuntimeState(t *testing.T) {
+	root := t.TempDir()
+	pluginDir := filepath.Join(root, "example")
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifestPath := filepath.Join(pluginDir, "plugin.toml")
+	if err := os.WriteFile(manifestPath, []byte("name=\"example\"\nenabled=true\nentrypoint=\"old.sh\"\nlifecycle_mode=\"daemon\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManager(root)
+	if err := m.Discover(); err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	original := m.Plugins["example"]
+
+	if err := os.WriteFile(manifestPath, []byte("name=\"example\"\nenabled=true\nentrypoint=\"new.sh\"\nlifecycle_mode=\"daemon\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.RefreshConfigs(); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	if m.Plugins["example"] != original {
+		t.Fatal("refresh replaced the plugin instance and lost runtime state")
+	}
+	if got := original.Config.Entrypoint; got != "new.sh" {
+		t.Fatalf("entrypoint = %q, want new.sh", got)
+	}
+}

@@ -168,6 +168,7 @@ func init() {
 	pluginCmd.AddCommand(uninstallPluginCmd)
 	pluginCmd.AddCommand(listPluginsCmd)
 	pluginCmd.AddCommand(pluginConfigCmd)
+	pluginCmd.AddCommand(restartPluginCmd)
 }
 
 func Execute() {

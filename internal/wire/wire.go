@@ -90,6 +90,23 @@ type ReloadResponse struct {
 	Message string `json:"message"`
 }
 
+// RestartResult reports the outcome of restarting a single plugin.
+//
+// Status is one of "restarted", "stopped", "skipped" or "error".
+type RestartResult struct {
+	Name    string `json:"name"`
+	Status  string `json:"status"`
+	Message string `json:"message,omitempty"`
+}
+
+// RestartResponse is sent from daemon to UI after restart request handling.
+type RestartResponse struct {
+	Type    string          `json:"type"` // "restart_response"
+	Success bool            `json:"success"`
+	Message string          `json:"message,omitempty"`
+	Results []RestartResult `json:"results,omitempty"`
+}
+
 // UpdateMessage is streamed from daemon to UI with aggregate snapshots.
 type UpdateMessage struct {
 	Type    string `json:"type"` // "update"

@@ -17,11 +17,12 @@ The plugin delegates to an external wallpaper daemon (`swww` by default) rather
 than opening its own `wlr-layer-shell` surface. Three reasons:
 
 1. **Process lifetime.** A background surface disappears the moment the process
-   owning it exits. Tarragon starts plugins as children of the daemon and stops
-   them with `Process.Kill()` — SIGKILL, no graceful shutdown
-   (`internal/plugins/manager.go:311-329`). If the wallpaper lived in this
-   process, every daemon restart, `tarragon plugin config` reload or crash
-   would leave the user staring at a black screen. The desktop background must
+   owning it exits. Tarragon starts plugins as children of the daemon and
+   terminates them on shutdown, on `tarragon plugin restart`, and on a reload
+   that disables the plugin or changes its lifecycle. Termination is graceful
+   (SIGTERM, then SIGKILL after `plugin_stop_timeout`), but graceful or not the
+   process still exits — and with it the surface. Every daemon restart would
+   leave the user staring at a black screen. The desktop background must
    outlive the launcher, so it cannot be owned by the launcher.
 2. **Scope.** Doing it properly means `wl_output` enumeration and hotplug,
    per-output modes, `wp_fractional_scale_v1` + `wp_viewporter`, shm buffer

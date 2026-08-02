@@ -400,6 +400,172 @@ func TestUIServer_ReloadDiscoversNewPlugins(t *testing.T) {
 	}
 }
 
+func TestUIServer_RestartReportsPerPluginOutcome(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	pluginRoot := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(configPath, []byte("[plugins]\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	viper.SetConfigFile(configPath)
+
+	writeManifest := func(name, lifecycle string) {
+		if err := os.MkdirAll(filepath.Join(pluginRoot, name), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", name, err)
+		}
+		body := "name=\"" + name + "\"\nenabled=true\nentrypoint=\"" + name + ".sh\"\nlifecycle_mode=\"" + lifecycle + "\"\n"
+		if err := os.WriteFile(filepath.Join(pluginRoot, name, "plugin.toml"), []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s manifest: %v", name, err)
+		}
+	}
+	writeManifest("oncall", "on_call")
+
+	mgr := plugins.NewManager(pluginRoot)
+	if err := mgr.Discover(); err != nil {
+		t.Fatalf("initial discover: %v", err)
+	}
+
+	store := newAggregateStore(10, "global", nil, 0.3)
+	uiReg := newUIRegistry()
+	reqOut := make(chan pluginRequest, 8)
+	plugReg := &pluginRegistry{conns: map[string]net.Conn{}, scanners: map[string]*bufio.Scanner{}}
+
+	serverConn, clientConn := net.Pipe()
+	defer func() { _ = clientConn.Close() }()
+	go handleUIClient(ctx, serverConn, mgr, reqOut, plugReg, store, uiReg, nil)
+
+	// Installed after the manager was built: restart must pick it up.
+	writeManifest("ondemand", "on_demand_persistent")
+
+	if err := wire.WriteMsg(clientConn, &wire.UIRequest{Type: "restart", ClientID: "cli-test"}); err != nil {
+		t.Fatalf("write restart: %v", err)
+	}
+
+	scanner := wire.NewScanner(clientConn)
+	var resp wire.RestartResponse
+	if err := wire.ReadMsg(scanner, &resp); err != nil {
+		t.Fatalf("read restart response: %v", err)
+	}
+	if resp.Type != "restart_response" {
+		t.Fatalf("type = %q", resp.Type)
+	}
+	if !resp.Success {
+		t.Fatalf("restart failed: %s", resp.Message)
+	}
+
+	byName := make(map[string]wire.RestartResult, len(resp.Results))
+	for _, r := range resp.Results {
+		byName[r.Name] = r
+	}
+	if got := byName["oncall"].Status; got != plugins.RestartStatusSkipped {
+		t.Fatalf("oncall status = %q, want %q", got, plugins.RestartStatusSkipped)
+	}
+	if _, ok := byName["ondemand"]; !ok {
+		t.Fatalf("restart did not discover the newly installed plugin: %+v", resp.Results)
+	}
+	if got := byName["ondemand"].Status; got != plugins.RestartStatusStopped {
+		t.Fatalf("ondemand status = %q, want %q", got, plugins.RestartStatusStopped)
+	}
+	if resp.Message != "restarted 0 plugin(s)" {
+		t.Fatalf("message = %q, want accurate restarted count", resp.Message)
+	}
+}
+
+func TestUIServer_RestartTargetsSinglePlugin(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	pluginRoot := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(configPath, []byte("[plugins]\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	viper.SetConfigFile(configPath)
+
+	for _, name := range []string{"alpha", "beta"} {
+		if err := os.MkdirAll(filepath.Join(pluginRoot, name), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", name, err)
+		}
+		body := "name=\"" + name + "\"\nenabled=true\nentrypoint=\"" + name + ".sh\"\nlifecycle_mode=\"on_call\"\n"
+		if err := os.WriteFile(filepath.Join(pluginRoot, name, "plugin.toml"), []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s manifest: %v", name, err)
+		}
+	}
+
+	mgr := plugins.NewManager(pluginRoot)
+	if err := mgr.Discover(); err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+
+	store := newAggregateStore(10, "global", nil, 0.3)
+	uiReg := newUIRegistry()
+	reqOut := make(chan pluginRequest, 8)
+	plugReg := &pluginRegistry{conns: map[string]net.Conn{}, scanners: map[string]*bufio.Scanner{}}
+
+	serverConn, clientConn := net.Pipe()
+	defer func() { _ = clientConn.Close() }()
+	go handleUIClient(ctx, serverConn, mgr, reqOut, plugReg, store, uiReg, nil)
+
+	if err := wire.WriteMsg(clientConn, &wire.UIRequest{Type: "restart", ClientID: "cli-test", Plugin: "beta"}); err != nil {
+		t.Fatalf("write restart: %v", err)
+	}
+
+	var resp wire.RestartResponse
+	if err := wire.ReadMsg(wire.NewScanner(clientConn), &resp); err != nil {
+		t.Fatalf("read restart response: %v", err)
+	}
+	if len(resp.Results) != 1 || resp.Results[0].Name != "beta" {
+		t.Fatalf("expected only beta to be restarted, got %+v", resp.Results)
+	}
+}
+
+func TestUIServer_RestartUnknownPluginFails(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(configPath, []byte("[plugins]\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	viper.SetConfigFile(configPath)
+
+	mgr := plugins.NewManager(t.TempDir())
+	store := newAggregateStore(10, "global", nil, 0.3)
+	uiReg := newUIRegistry()
+	reqOut := make(chan pluginRequest, 8)
+	plugReg := &pluginRegistry{conns: map[string]net.Conn{}, scanners: map[string]*bufio.Scanner{}}
+
+	serverConn, clientConn := net.Pipe()
+	defer func() { _ = clientConn.Close() }()
+	go handleUIClient(ctx, serverConn, mgr, reqOut, plugReg, store, uiReg, nil)
+
+	if err := wire.WriteMsg(clientConn, &wire.UIRequest{Type: "restart", ClientID: "cli-test", Plugin: "ghost"}); err != nil {
+		t.Fatalf("write restart: %v", err)
+	}
+
+	var resp wire.RestartResponse
+	if err := wire.ReadMsg(wire.NewScanner(clientConn), &resp); err != nil {
+		t.Fatalf("read restart response: %v", err)
+	}
+	if resp.Success {
+		t.Fatal("restarting an unknown plugin should not report success")
+	}
+	if len(resp.Results) != 1 || resp.Results[0].Status != plugins.RestartStatusError {
+		t.Fatalf("expected an error result, got %+v", resp.Results)
+	}
+}
+
 func TestDispatchQuery_GlobalRespectsGeneralSuggestionEligibility(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
