@@ -133,7 +133,7 @@ func TestConfigDefaultsAndNormalize(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.Directories = []string{"~/Walls", "$HOME/Walls", "  ", "/tmp/walls/"}
 	cfg.Extensions = []string{".PNG", "jpg", ""}
-	cfg.Backend = "  SWWW "
+	cfg.Backend = "  AWWW "
 	cfg.MaxResults = 0
 	cfg.normalize()
 
@@ -145,7 +145,7 @@ func TestConfigDefaultsAndNormalize(t *testing.T) {
 	if !reflect.DeepEqual(cfg.Extensions, []string{"png", "jpg"}) {
 		t.Fatalf("extensions = %q", cfg.Extensions)
 	}
-	if cfg.Backend != "swww" {
+	if cfg.Backend != "awww" {
 		t.Fatalf("backend = %q", cfg.Backend)
 	}
 	if cfg.MaxResults != 40 {
@@ -183,7 +183,7 @@ func TestConfigRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second load: %v", err)
 	}
-	if !cfg.Matugen || !cfg.RestoreOnStart || cfg.Backend != "auto" {
+	if !cfg.RestoreOnStart || cfg.Backend != "matugen" {
 		t.Fatalf("unexpected config from template: %+v", cfg)
 	}
 	if cfg.MatugenPrefer == "" {
@@ -202,7 +202,7 @@ func TestConfigRoundTrip(t *testing.T) {
 	if cfg.Backend != "swaybg" {
 		t.Fatalf("backend = %q", cfg.Backend)
 	}
-	if !cfg.Matugen || cfg.MaxResults != 40 {
+	if cfg.MaxResults != 40 {
 		t.Fatalf("defaults lost on partial config: %+v", cfg)
 	}
 }
@@ -216,9 +216,9 @@ func TestStatePersistenceAndHistory(t *testing.T) {
 		t.Fatal("fresh state should be empty")
 	}
 
-	st.Record("/a.png", "swww")
-	st.Record("/b.png", "swww")
-	st.Record("/a.png", "swww") // re-selecting must not duplicate history
+	st.Record("/a.png", "awww")
+	st.Record("/b.png", "awww")
+	st.Record("/a.png", "awww") // re-selecting must not duplicate history
 	if err := st.Save(); err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestStatePersistenceAndHistory(t *testing.T) {
 	if !reflect.DeepEqual(reloaded.History, []string{"/a.png", "/b.png"}) {
 		t.Fatalf("history = %q", reloaded.History)
 	}
-	if reloaded.Backend != "swww" {
+	if reloaded.Backend != "awww" {
 		t.Fatalf("backend = %q", reloaded.Backend)
 	}
 }

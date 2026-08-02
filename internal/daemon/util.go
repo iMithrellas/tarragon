@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/iMithrellas/tarragon/internal/plugins"
@@ -14,7 +16,10 @@ import (
 
 // invokeOnCallQuery runs an on-call plugin query command and returns its JSON output.
 func invokeOnCallQuery(ctx context.Context, p *plugins.Plugin, query string) (json.RawMessage, error) {
-	entry := plugins.ResolveEntrypoint(p.Dir, p.Config.Entrypoint)
+	entry, err := resolveOnCallEntrypoint(p)
+	if err != nil {
+		return nil, err
+	}
 	cmd := exec.CommandContext(ctx, entry, "tarragon", "query", query)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -38,7 +43,10 @@ func invokeOnCallQuery(ctx context.Context, p *plugins.Plugin, query string) (js
 // If stdout is empty and exit status is zero, the action is treated as success.
 // If stdout contains JSON, it may include {"success": bool, "message": string}.
 func invokeOnCallSelect(ctx context.Context, p *plugins.Plugin, resultID, action string) (wire.SelectResponse, error) {
-	entry := plugins.ResolveEntrypoint(p.Dir, p.Config.Entrypoint)
+	entry, err := resolveOnCallEntrypoint(p)
+	if err != nil {
+		return wire.SelectResponse{}, err
+	}
 	args := []string{"tarragon", "select", resultID}
 	if strings.TrimSpace(action) != "" {
 		args = append(args, action)
@@ -70,6 +78,22 @@ func invokeOnCallSelect(ctx context.Context, p *plugins.Plugin, resultID, action
 	}
 	resp.Message = parsed.Message
 	return resp, nil
+}
+
+// resolveOnCallEntrypoint recovers system plugins whose executable moved after
+// installation. Local plugin entrypoints remain pinned to their manifest path.
+func resolveOnCallEntrypoint(p *plugins.Plugin) (string, error) {
+	entry := plugins.ResolveEntrypoint(p.Dir, p.Config.Entrypoint)
+	if info, err := os.Stat(entry); err == nil && !info.IsDir() {
+		return entry, nil
+	}
+	if p.Config.Source == "system" {
+		name := filepath.Base(p.Config.Entrypoint)
+		if resolved, err := exec.LookPath(name); err == nil {
+			return resolved, nil
+		}
+	}
+	return "", fmt.Errorf("%s: entrypoint %q is unavailable", p.Config.Name, entry)
 }
 
 // escapeJSONString escapes a string for embedding into JSON literals.

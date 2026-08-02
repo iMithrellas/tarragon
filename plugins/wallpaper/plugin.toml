@@ -1,5 +1,5 @@
 name = "wallpaper"
-description = "Browse a wallpaper library, set the Wayland background and regenerate matugen themes"
+description = "Browse a wallpaper library and set themes through matugen"
 enabled = true
 entrypoint = "wallpaper"
 lifecycle_mode = "daemon"

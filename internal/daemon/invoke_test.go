@@ -59,6 +59,45 @@ func TestInvokeOnCallQuery_AbsoluteEntrypoint(t *testing.T) {
 	}
 }
 
+func TestInvokeOnCallQuery_SystemEntrypointMoved(t *testing.T) {
+	d := t.TempDir()
+	writeScript(t, d, "moved-plugin", "#!/bin/sh\necho '{\"results\":[\"recovered\"]}'\n")
+	t.Setenv("PATH", d)
+	p := &plugins.Plugin{
+		Dir: d,
+		Config: plugins.PluginConfig{
+			Name:       "moved",
+			Source:     "system",
+			Entrypoint: "/obsolete/bin/moved-plugin",
+			Enabled:    true,
+		},
+	}
+	out, err := invokeOnCallQuery(context.Background(), p, "ignored")
+	if err != nil {
+		t.Fatalf("invoke error: %v", err)
+	}
+	if string(out) != `{"results":["recovered"]}` {
+		t.Fatalf("unexpected output: %s", string(out))
+	}
+}
+
+func TestResolveOnCallEntrypoint_LocalPluginDoesNotUsePathFallback(t *testing.T) {
+	d := t.TempDir()
+	writeScript(t, d, "local-plugin", "#!/bin/sh\nexit 0\n")
+	t.Setenv("PATH", d)
+	p := &plugins.Plugin{
+		Dir: t.TempDir(),
+		Config: plugins.PluginConfig{
+			Name:       "local",
+			Entrypoint: "local-plugin",
+			Enabled:    true,
+		},
+	}
+	if _, err := resolveOnCallEntrypoint(p); err == nil {
+		t.Fatal("expected missing local entrypoint to fail")
+	}
+}
+
 func TestInvokeOnCallSelect_SuccessWithJSON(t *testing.T) {
 	d := t.TempDir()
 	writeScript(t, d, "select.sh", "#!/usr/bin/env bash\nif [[ \"$1\" == \"tarragon\" && \"$2\" == \"select\" ]]; then echo '{\"success\":true,\"message\":\"done\"}'; exit 0; fi\nexit 1\n")
@@ -82,5 +121,33 @@ func TestInvokeOnCallSelect_DefaultSuccessWhenNoOutput(t *testing.T) {
 	}
 	if !resp.Success {
 		t.Fatalf("expected success response, got %+v", resp)
+	}
+}
+
+func TestInvokeOnCallSelect_SystemEntrypointMoved(t *testing.T) {
+	d := t.TempDir()
+	writeScript(t, d, "moved-select", `#!/bin/sh
+if [ "$1" = "tarragon" ] && [ "$2" = "select" ]; then
+  echo '{"success":true,"message":"recovered select"}'
+  exit 0
+fi
+exit 1
+`)
+	t.Setenv("PATH", d)
+	p := &plugins.Plugin{
+		Dir: d,
+		Config: plugins.PluginConfig{
+			Name:       "moved",
+			Source:     "system",
+			Entrypoint: "/obsolete/bin/moved-select",
+			Enabled:    true,
+		},
+	}
+	resp, err := invokeOnCallSelect(context.Background(), p, "id-1", "open")
+	if err != nil {
+		t.Fatalf("invoke select error: %v", err)
+	}
+	if !resp.Success || resp.Message != "recovered select" {
+		t.Fatalf("unexpected select response: %+v", resp)
 	}
 }

@@ -16,10 +16,10 @@ package main
 // where the Wayland bindings are third-party and unproven.
 //
 // Delegating to a dedicated wallpaper daemon gives all of that for free and
-// keeps the background alive independently of Tarragon. awww is the default
+// keeps the background alive independently of Tarragon. matugen is the default
 // because it already runs its own daemon, handles multi-output and hotplug,
 // caches decoded images and supports transitions, and exposes a trivial CLI.
-// The other backends exist so the plugin is not a hard awww dependency.
+// The other backends exist so the plugin is not a hard awww or matugen dependency.
 
 import (
 	"context"
@@ -45,10 +45,12 @@ type Backend interface {
 }
 
 // backendOrder is the auto-detection preference, best first.
-var backendOrder = []string{"awww", "hyprpaper", "swaybg", "wbg"}
+var backendOrder = []string{"matugen", "awww", "hyprpaper", "swaybg", "wbg"}
 
 func newBackend(name string) (Backend, error) {
 	switch name {
+	case "matugen":
+		return &matugenBackend{}, nil
 	case "awww":
 		return &awwwBackend{}, nil
 	case "hyprpaper":
@@ -93,15 +95,83 @@ func resolveBackend(cfg *Config) (Backend, error) {
 		}
 		return b, nil
 	}
-	return nil, fmt.Errorf("no wallpaper backend found; install one of %s or set custom_command in %s",
+	return nil, fmt.Errorf("no wallpaper backend found; install matugen or one of %s, or set custom_command in %s",
 		strings.Join(backendOrder, ", "), configPath())
+}
+
+// matugenBackend delegates both theme generation and wallpaper application to
+// matugen. Its [config.wallpaper] section is responsible for invoking awww (or
+// another configured wallpaper command), so the plugin does not apply the
+// image a second time.
+type matugenBackend struct{}
+
+func (m *matugenBackend) Name() string { return "matugen" }
+
+func (m *matugenBackend) Available() bool {
+	_, err := exec.LookPath("matugen")
+	return err == nil
+}
+
+func (m *matugenBackend) Apply(ctx context.Context, path string, cfg *Config, _ *State) error {
+	// Matugen owns the wallpaper command, but it does not manage the awww
+	// daemon. Ensure the default Wayland wallpaper daemon exists before
+	// matugen executes its [config.wallpaper] hook.
+	if err := ensureAwwwDaemon(ctx); err != nil {
+		return err
+	}
+
+	args := []string{"image", path}
+	if mode := strings.TrimSpace(cfg.MatugenMode); mode != "" {
+		args = append(args, "--mode", mode)
+	}
+	if scheme := strings.TrimSpace(cfg.MatugenType); scheme != "" {
+		args = append(args, "--type", scheme)
+	}
+	if prefer := strings.TrimSpace(cfg.MatugenPrefer); prefer != "" {
+		args = append(args, "--prefer", prefer)
+	}
+	args = append(args, cfg.MatugenExtraArgs...)
+
+	return runCommand(ctx, "matugen", args...)
+}
+
+func ensureAwwwDaemon(ctx context.Context) error {
+	if _, err := exec.LookPath("awww"); err != nil {
+		return fmt.Errorf("matugen backend requires awww: %w", err)
+	}
+	if runCommand(ctx, "awww", "query") == nil {
+		return nil
+	}
+
+	daemon, err := exec.LookPath("awww-daemon")
+	if err != nil {
+		return fmt.Errorf("awww daemon is not running and awww-daemon is unavailable: %w", err)
+	}
+	cmd := exec.Command(daemon)
+	detach(cmd)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start awww-daemon: %w", err)
+	}
+	go func() { _ = cmd.Wait() }()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if runCommand(ctx, "awww", "query") == nil {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return fmt.Errorf("awww-daemon did not become ready; check WAYLAND_DISPLAY=%q and its namespace", os.Getenv("WAYLAND_DISPLAY"))
 }
 
 // ─── awww ────────────────────────────────────────────────────────────────
 
 type awwwBackend struct{}
 
-func (s *awwwBackend) Name() string { return "swww" }
+func (s *awwwBackend) Name() string { return "awww" }
 
 func (s *awwwBackend) Available() bool {
 	_, err := exec.LookPath("awww")
@@ -114,19 +184,19 @@ func (s *awwwBackend) Apply(ctx context.Context, path string, cfg *Config, _ *St
 	}
 
 	args := []string{"img", path}
-	if t := strings.TrimSpace(cfg.awwwTransitionType); t != "" {
+	if t := strings.TrimSpace(cfg.AwwwTransitionType); t != "" {
 		args = append(args, "--transition-type", t)
 	}
-	if cfg.awwwTransitionFPS > 0 {
-		args = append(args, "--transition-fps", strconv.Itoa(cfg.awwwTransitionFPS))
+	if cfg.AwwwTransitionFPS > 0 {
+		args = append(args, "--transition-fps", strconv.Itoa(cfg.AwwwTransitionFPS))
 	}
-	if cfg.awwwTransitionDuration > 0 {
-		args = append(args, "--transition-duration", strconv.FormatFloat(cfg.awwwTransitionDuration, 'f', -1, 64))
+	if cfg.AwwwTransitionDuration > 0 {
+		args = append(args, "--transition-duration", strconv.FormatFloat(cfg.AwwwTransitionDuration, 'f', -1, 64))
 	}
-	if r := strings.TrimSpace(cfg.awwwResizeMode); r != "" {
+	if r := strings.TrimSpace(cfg.AwwwResizeMode); r != "" {
 		args = append(args, "--resize", r)
 	}
-	if c := strings.TrimSpace(cfg.awwwFillColor); c != "" {
+	if c := strings.TrimSpace(cfg.AwwwFillColor); c != "" {
 		args = append(args, "--fill-color", c)
 	}
 	return runCommand(ctx, "awww", args...)

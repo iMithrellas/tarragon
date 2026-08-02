@@ -30,14 +30,13 @@ type Config struct {
 	CustomCommand []string `toml:"custom_command"`
 
 	// awww tuning
-	awwwTransitionType     string  `toml:"swww_transition_type"`
-	awwwTransitionFPS      int     `toml:"swww_transition_fps"`
-	awwwTransitionDuration float64 `toml:"swww_transition_duration"`
-	awwwResizeMode         string  `toml:"swww_resize"`
-	awwwFillColor          string  `toml:"swww_fill_color"`
+	AwwwTransitionType     string  `toml:"awww_transition_type"`
+	AwwwTransitionFPS      int     `toml:"awww_transition_fps"`
+	AwwwTransitionDuration float64 `toml:"awww_transition_duration"`
+	AwwwResizeMode         string  `toml:"awww_resize"`
+	AwwwFillColor          string  `toml:"awww_fill_color"`
 
 	// Theming
-	Matugen     bool   `toml:"matugen"`
 	MatugenMode string `toml:"matugen_mode"`
 	MatugenType string `toml:"matugen_type"`
 	// MatugenPrefer maps to matugen's --prefer. It is mandatory in practice:
@@ -46,7 +45,6 @@ type Config struct {
 	// started by the daemon.
 	MatugenPrefer    string   `toml:"matugen_prefer"`
 	MatugenExtraArgs []string `toml:"matugen_extra_args"`
-	MatugenTimeout   string   `toml:"matugen_timeout"`
 
 	// Post hook, runs after a successful set. {path} is substituted.
 	PostCommand []string `toml:"post_command"`
@@ -63,16 +61,14 @@ func defaultConfig() *Config {
 		Extensions:             []string{"jpg", "jpeg", "png", "webp", "bmp", "gif", "tif", "tiff", "pnm", "tga", "farbfeld"},
 		MaxResults:             40,
 		RescanInterval:         "2m",
-		Backend:                "auto",
-		awwwTransitionType:     "grow",
-		awwwTransitionFPS:      60,
-		awwwTransitionDuration: 1.0,
-		awwwResizeMode:         "crop",
-		Matugen:                true,
+		Backend:                "matugen",
+		AwwwTransitionType:     "outer",
+		AwwwTransitionFPS:      60,
+		AwwwTransitionDuration: 1.5,
+		AwwwResizeMode:         "crop",
 		MatugenMode:            "dark",
 		MatugenType:            "scheme-tonal-spot",
 		MatugenPrefer:          "saturation",
-		MatugenTimeout:         "20s",
 		RestoreOnStart:         true,
 		RestoreTimeout:         "60s",
 	}
@@ -178,10 +174,6 @@ func (c *Config) rescanInterval() time.Duration {
 	return parseDuration(c.RescanInterval, 2*time.Minute)
 }
 
-func (c *Config) matugenTimeout() time.Duration {
-	return parseDuration(c.MatugenTimeout, 20*time.Second)
-}
-
 func (c *Config) restoreTimeout() time.Duration {
 	return parseDuration(c.RestoreTimeout, 60*time.Second)
 }
@@ -239,33 +231,34 @@ max_results = 40
 rescan_interval = "2m"
 
 # Backend used to paint the Wayland background layer.
-#   auto      pick the first available of: awww, hyprpaper, swaybg, wbg
+#   matugen   generate templates and let matugen's config apply the wallpaper
+#   auto      pick the first available of: matugen, awww, hyprpaper, swaybg, wbg
 #   awww      preferred; own daemon, multi-output, hotplug, transitions
 #   hyprpaper Hyprland only, driven through hyprctl
 #   swaybg    respawned per change (wlr-layer-shell)
 #   wbg       respawned per change (wlr-layer-shell)
 #   custom    use custom_command below
-backend = "auto"
+backend = "matugen"
 
 # Only used with backend = "custom". Argv, not a shell line. {path} is
 # replaced with the absolute wallpaper path.
 # custom_command = ["my-wallpaper-tool", "--set", "{path}"]
 
 # awww tuning (ignored by other backends).
-awww_transition_type = "grow"
+awww_transition_type = "outer"
 awww_transition_fps = 60
 awww_transition_duration = 1.0
 awww_resize = "crop"
 
-# Regenerate matugen templates from the new wallpaper.
-matugen = true
+# Matugen owns both template generation and wallpaper application. Its
+# [config.wallpaper] section in ~/.config/matugen/config.toml should invoke
+# awww (or another wallpaper daemon).
 matugen_mode = "dark"
 matugen_type = "scheme-tonal-spot"
 # Which candidate source colour to pick. Required for matugen >= 4 when run
 # without a TTY (i.e. always, from the daemon). One of: darkness, lightness,
 # saturation, less-saturation, value, closest-to-fallback. Set to "" to omit.
 matugen_prefer = "saturation"
-matugen_timeout = "20s"
 # matugen_extra_args = ["--contrast", "0.2"]
 
 # Optional hook run after a successful change. Argv, {path} substituted.

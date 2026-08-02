@@ -27,13 +27,35 @@ There are two supported plugin sources:
 
 `tarragon plugin enable <name>` writes/updates plugin metadata on disk. A running daemon must reload or restart before it can use new manifests.
 
-Current behavior note: `enable` itself does not trigger daemon reload. In practice, restart the daemon or issue a reload-triggering config update (for example via `tarragon plugin config ...`).
+Current behavior note: `enable` itself does not trigger daemon reload. In practice, run `tarragon plugin restart`, or issue a reload-triggering config update (for example via `tarragon plugin config ...`).
 
 Integration contract:
 
 - enable writes the plugin manifest into Tarragon's plugin directory with system entrypoint normalization.
 - reload re-reads plugin metadata/config and refreshes in-memory plugin state used for status + dispatch.
 - after reload, newly enabled system plugins are eligible for status/dispatch according to their manifest fields (`enabled`, `lifecycle_mode`, `prefix`, `require_prefix`, `provides_general_suggestions`).
+
+### Restarting Plugins
+
+`tarragon plugin restart [plugin-name]` bounces plugin processes in the running daemon. With no argument every plugin is targeted.
+
+Restart re-reads manifests and config overrides first, so it also picks up plugins installed or reconfigured since the daemon started. Reported status per plugin:
+
+| Lifecycle | Status | Behavior |
+| --- | --- | --- |
+| `daemon` | `restarted` | process stopped and started again |
+| `on_demand_persistent` | `stopped` | stopped only; starts again on the next matching query |
+| `on_call` | `skipped` | no long-lived process to bounce |
+| any, disabled | `stopped` | stopped, not started |
+| unknown name | `error` | reported as not found |
+
+## Plugin Shutdown Contract
+
+Tarragon stops plugin processes gracefully. A plugin is sent `SIGTERM` and is only sent `SIGKILL` if it is still alive after the grace period, which is set by the `plugin_stop_timeout` config option (default `5s`).
+
+This applies to daemon shutdown, `tarragon plugin restart`, and plugins stopped by a reload because they were disabled or had their lifecycle changed.
+
+Plugin authors should handle `SIGTERM`: flush state, close sockets and exit. Persistent plugins that ignore it will still be killed, just later. Plugins are stopped concurrently, so total shutdown time is bounded by the slowest plugin rather than the sum of all of them.
 
 ### Plugin Source Metadata
 
@@ -107,6 +129,10 @@ Treat `connected` as transport state, not total availability. An enabled `on_cal
 Entrypoint path rules:
 - Relative `entrypoint`: resolved from the plugin directory (`~/.local/lib/tarragon/plugins/<name>/...`).
 - Absolute `entrypoint`: executed directly as-is (used by system-enabled plugins).
+- If an absolute entrypoint for a `source = "system"` on-call plugin no longer
+  exists, Tarragon resolves its basename through the daemon's `PATH`. This lets
+  system plugins continue working after their executable moves between standard
+  user/system bin directories. Local plugin manifests do not use this fallback.
 
 ## Unix Domain Socket + NDJSON Protocol
 

@@ -166,7 +166,7 @@ func main() {
 			p.log.Error("%v", err)
 			os.Exit(1)
 		}
-		if err := p.applier.Apply(ctx, abs, true); err != nil {
+		if err := p.applier.Apply(ctx, abs); err != nil {
 			p.log.Error("%v", err)
 			os.Exit(1)
 		}
@@ -289,8 +289,7 @@ func (p *plugin) buildResults(query string) responseData {
 
 func wallpaperActions() []actionItem {
 	return []actionItem{
-		{Name: "set", Default: true, Description: "Set wallpaper and regenerate theme"},
-		{Name: "set_only", Description: "Set wallpaper without regenerating the theme"},
+		{Name: "set", Default: true, Description: "Set wallpaper"},
 	}
 }
 
@@ -369,28 +368,24 @@ func (p *plugin) handleSelect(ctx context.Context, id, action string) selectResp
 		return selectResponse{Type: "select_response", Success: false, Message: err.Error()}
 	}
 
-	var withTheme bool
 	switch action {
 	case "", "set", "open":
-		withTheme = true
-	case "set_only", "set_no_theme":
-		withTheme = false
 	default:
 		return selectResponse{
 			Type:    "select_response",
 			Success: false,
-			Message: fmt.Sprintf("unknown action %q", action),
+			Message: fmt.Sprintf("unknown action %q; use set", action),
 		}
 	}
 
-	if err := p.applier.Apply(ctx, path, withTheme); err != nil {
+	if err := p.applier.Apply(ctx, path); err != nil {
 		return selectResponse{Type: "select_response", Success: false, Message: err.Error()}
 	}
 
 	label := prettify(strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)))
 	msg := "Wallpaper set to " + label
-	if withTheme && p.cfg.Matugen {
-		msg += " (theme regenerated)"
+	if p.applier.BackendName() == "matugen" {
+		msg += " (matugen applied)"
 	}
 	return selectResponse{Type: "select_response", Success: true, Message: msg}
 }
@@ -561,7 +556,7 @@ func runCLIContract(args []string) int {
 }
 
 const manifestTOML = `name = "wallpaper"
-description = "Browse a wallpaper library, set the Wayland background and regenerate matugen themes"
+ description = "Browse a wallpaper library and set themes through matugen"
 enabled = true
 entrypoint = "wallpaper"
 lifecycle_mode = "daemon"
@@ -599,7 +594,7 @@ func (p *plugin) printInfo(ctx context.Context) int {
 	}
 	fmt.Println()
 
-	fmt.Printf("matugen     : enabled=%v mode=%s type=%s\n", p.cfg.Matugen, p.cfg.MatugenMode, p.cfg.MatugenType)
+	fmt.Printf("matugen     : mode=%s type=%s prefer=%s\n", p.cfg.MatugenMode, p.cfg.MatugenType, p.cfg.MatugenPrefer)
 	if cur := p.state.Current(); cur != "" {
 		fmt.Printf("current     : %s (set %s via %s)\n", cur,
 			p.state.AppliedAt.Format(time.RFC3339), p.state.Backend)

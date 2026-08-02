@@ -1,8 +1,9 @@
 # wallpaper plugin (Go)
 
 Browse a library of wallpaper directories from Tarragon, set the selected image
-as the Wayland background layer, regenerate [matugen](https://github.com/InioX/matugen)
-templates from it, and restore it automatically after a reboot.
+through [matugen](https://github.com/InioX/matugen), and restore it automatically
+after a reboot. Matugen owns both template generation and wallpaper application
+through its `[config.wallpaper]` configuration.
 
 ```
 @wp forest
@@ -13,7 +14,7 @@ templates from it, and restore it automatically after a reboot.
 
 ### Wrap a wallpaper daemon instead of painting the layer surface ourselves
 
-The plugin delegates to an external wallpaper daemon (`swww` by default) rather
+The plugin delegates to an external wallpaper daemon through matugen by default rather
 than opening its own `wlr-layer-shell` surface. Three reasons:
 
 1. **Process lifetime.** A background surface disappears the moment the process
@@ -30,7 +31,7 @@ than opening its own `wlr-layer-shell` surface. Three reasons:
    project, not a plugin — and in Go the Wayland bindings are third-party and
    comparatively unproven, which is a lot of dependency surface for a bundled
    first-party plugin.
-3. **It is already solved.** `swww` runs its own daemon, survives independently
+3. **It is already solved.** `awww` runs its own daemon, survives independently
    of Tarragon, handles multi-output and hotplug, caches decoded images, and
    does transitions. Wrapping it is a few `exec` calls.
 
@@ -73,21 +74,22 @@ business showing up in every unprefixed query.
    compositor at login, restore **retries with exponential backoff** (250 ms →
    5 s, capped) for `restore_timeout` (default 60 s), re-running backend
    detection on each attempt.
-4. Restore deliberately skips matugen: the templates were already written when
-   the wallpaper was chosen, and rewriting dotfiles on every login is
-   pointless churn.
+4. Restore runs the configured backend again. With the default `matugen`
+   backend, this regenerates templates and lets matugen re-apply the wallpaper.
 
 ## Backends
 
 | Backend     | Detection                                | Notes |
 |-------------|------------------------------------------|-------|
-| `swww`      | `swww` on `PATH`                         | Preferred. Starts `swww-daemon` (or `swww init`) if not answering, then `swww img` with transition options. |
+| `matugen`   | `matugen` on `PATH`                      | Preferred. Ensures the default `awww-daemon` is running, then generates templates and uses matugen's `[config.wallpaper]` command. |
+| `awww`      | `awww` on `PATH`                         | Direct wallpaper daemon backend without matugen. |
 | `hyprpaper` | `HYPRLAND_INSTANCE_SIGNATURE` + `hyprctl` + `hyprpaper` | Driven via `hyprctl hyprpaper preload/wallpaper/unload`. |
 | `swaybg`    | `swaybg` on `PATH`                       | No IPC: a new instance is spawned and the old one is replaced. |
 | `wbg`       | `wbg` on `PATH`                          | Same respawn model. |
 | `custom`    | `custom_command` is set                  | Any argv; `{path}` is substituted (appended if absent). |
 
-`backend = "auto"` (default) picks the first available in the order above.
+`backend = "matugen"` (default) runs matugen. `backend = "auto"` picks the
+first available backend in the order above.
 
 All spawned daemons are detached with `setsid`, so they survive Tarragon being
 killed. For the respawn backends the child PID is recorded in the state file so
@@ -106,19 +108,18 @@ extensions = ["jpg", "jpeg", "png", "webp"]
 max_results = 40
 rescan_interval = "2m"
 
-backend = "auto"                  # auto|swww|hyprpaper|swaybg|wbg|custom
+backend = "matugen"               # matugen|auto|awww|hyprpaper|swaybg|wbg|custom
 # custom_command = ["my-tool", "--set", "{path}"]
 
-swww_transition_type = "grow"
-swww_transition_fps = 60
-swww_transition_duration = 1.0
-swww_resize = "crop"
+awww_transition_type = "outer"
+awww_transition_fps = 60
+awww_transition_duration = 1.5
+awww_resize = "crop"
 
-matugen = true
+# matugen owns wallpaper application through ~/.config/matugen/config.toml.
 matugen_mode = "dark"             # dark|light
 matugen_type = "scheme-tonal-spot"
 matugen_prefer = "saturation"
-matugen_timeout = "20s"
 # matugen_extra_args = ["--contrast", "0.2"]
 
 # post_command = ["makoctl", "reload"]
@@ -139,17 +140,16 @@ for several machines in one config.
 
 | Action     | Behaviour |
 |------------|-----------|
-| `set`      | default — set the wallpaper and regenerate matugen templates |
-| `set_only` | set the wallpaper, leave the theme alone |
+| `set`      | default — run the configured backend |
 
 Two synthetic entries are offered alongside the library: **Random wallpaper**
 and **Previous wallpaper** (from a 20-entry MRU history).
 
 Results carry `preview_path`, so UIs that support previews render thumbnails.
 
-If a wallpaper is set but matugen fails, the change is *not* rolled back; the
-`select_response` reports the partial failure and the error is logged. A broken
-matugen config should not stop you changing wallpapers.
+If the `matugen` backend fails, the wallpaper is not persisted as successfully
+applied and the `select_response` reports the error. Check matugen's own config,
+especially its `[config.wallpaper]` command and template paths.
 
 ## Build and install
 

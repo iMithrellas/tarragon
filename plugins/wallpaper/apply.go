@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
-	"strings"
 	"sync"
 	"time"
 )
@@ -57,15 +55,14 @@ func (a *Applier) BackendName() string {
 	return b.Name()
 }
 
-// Apply sets the wallpaper, persists it, and optionally regenerates matugen
-// templates. withTheme=false skips matugen for the "set only" action.
-func (a *Applier) Apply(ctx context.Context, path string, withTheme bool) error {
+// Apply sets the wallpaper through the configured backend and persists it.
+func (a *Applier) Apply(ctx context.Context, path string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.applyLocked(ctx, path, withTheme)
+	return a.applyLocked(ctx, path)
 }
 
-func (a *Applier) applyLocked(ctx context.Context, path string, withTheme bool) error {
+func (a *Applier) applyLocked(ctx context.Context, path string) error {
 	info, err := os.Stat(path)
 	if err != nil {
 		return fmt.Errorf("wallpaper %s: %w", path, err)
@@ -89,15 +86,6 @@ func (a *Applier) applyLocked(ctx context.Context, path string, withTheme bool) 
 	if err := a.state.Save(); err != nil {
 		// Non-fatal: the wallpaper is set, only persistence failed.
 		a.log.Error("failed to persist state: %v", err)
-	}
-
-	if withTheme && a.cfg.Matugen {
-		if err := a.runMatugen(ctx, path); err != nil {
-			// Also non-fatal: a broken matugen config should not make the
-			// wallpaper change look like a failure.
-			a.log.Error("matugen failed: %v", err)
-			return fmt.Errorf("wallpaper set, but matugen failed: %w", err)
-		}
 	}
 
 	if len(a.cfg.PostCommand) > 0 {
@@ -131,10 +119,7 @@ func (a *Applier) Restore(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		// Theming is skipped on restore: matugen templates were already
-		// written when the wallpaper was originally chosen, and rerunning
-		// it on every login would needlessly rewrite dotfiles.
-		err := a.Apply(ctx, current, false)
+		err := a.Apply(ctx, current)
 		if err == nil {
 			a.log.Info("restored wallpaper %s (attempt %d)", current, attempt)
 			return nil
@@ -159,35 +144,6 @@ func (a *Applier) Restore(ctx context.Context) error {
 		}
 	}
 	return fmt.Errorf("restore gave up after %s: %w", a.cfg.restoreTimeout(), lastErr)
-}
-
-// runMatugen regenerates the user's matugen templates from the wallpaper.
-func (a *Applier) runMatugen(ctx context.Context, path string) error {
-	if _, err := exec.LookPath("matugen"); err != nil {
-		return fmt.Errorf("matugen not found on PATH")
-	}
-
-	args := []string{"image", path}
-	if m := strings.TrimSpace(a.cfg.MatugenMode); m != "" {
-		args = append(args, "--mode", m)
-	}
-	if t := strings.TrimSpace(a.cfg.MatugenType); t != "" {
-		args = append(args, "--type", t)
-	}
-	if pref := strings.TrimSpace(a.cfg.MatugenPrefer); pref != "" {
-		args = append(args, "--prefer", pref)
-	}
-	args = append(args, a.cfg.MatugenExtraArgs...)
-
-	mctx, cancel := context.WithTimeout(ctx, a.cfg.matugenTimeout())
-	defer cancel()
-
-	start := time.Now()
-	if err := runCommand(mctx, "matugen", args...); err != nil {
-		return err
-	}
-	a.log.Info("matugen regenerated templates in %s", time.Since(start).Round(time.Millisecond))
-	return nil
 }
 
 func (a *Applier) runPostCommand(ctx context.Context, path string) error {

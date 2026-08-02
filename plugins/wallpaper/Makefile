@@ -9,13 +9,12 @@ check-deps:
 	@# Runtime dependencies are optional and only warned about: the plugin
 	@# auto-detects a backend at runtime and reports a clear error if none
 	@# is present.
-	@command -v swww >/dev/null 2>&1 \
+	@command -v matugen >/dev/null 2>&1 \
+		|| command -v awww >/dev/null 2>&1 \
 		|| command -v hyprpaper >/dev/null 2>&1 \
 		|| command -v swaybg >/dev/null 2>&1 \
 		|| command -v wbg >/dev/null 2>&1 \
-		|| echo "warning: no wallpaper backend found (install swww, hyprpaper, swaybg or wbg)" >&2
-	@command -v matugen >/dev/null 2>&1 \
-		|| echo "warning: matugen not found; theme generation will be skipped" >&2
+		|| echo "warning: no wallpaper backend found (install matugen, awww, hyprpaper, swaybg or wbg)" >&2
 
 build: check-deps
 	go build -o $(PLUGIN_NAME) .
