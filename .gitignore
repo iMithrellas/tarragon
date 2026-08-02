@@ -41,3 +41,4 @@ plugin_templates/cpp/template_cpp
 
 # Go plugin build outputs
 plugins/file_finder/file_finder
+plugins/wallpaper/wallpaper

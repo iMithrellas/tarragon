@@ -23,11 +23,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 ENGINES = {
-    "g": ("Google", "https://www.google.com/search?q={query}"),
-    "yt": ("YouTube", "https://www.youtube.com/results?search_query={query}"),
-    "ddg": ("DuckDuckGo", "https://duckduckgo.com/?q={query}"),
-    "w": ("Wikipedia", "https://en.wikipedia.org/wiki/Special:Search?search={query}"),
-    "gh": ("GitHub", "https://github.com/search?q={query}"),
+    "@g": ("Google", "https://www.google.com/search?q={query}"),
+    "@yt": ("YouTube", "https://www.youtube.com/results?search_query={query}"),
+    "@ddg": ("DuckDuckGo", "https://duckduckgo.com/?q={query}"),
+    "@w": ("Wikipedia", "https://en.wikipedia.org/wiki/Special:Search?search={query}"),
+    "@gh": ("GitHub", "https://github.com/search?q={query}"),
 }
 
 

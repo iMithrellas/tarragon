@@ -1,0 +1,12 @@
+name = "wallpaper"
+description = "Browse a wallpaper library, set the Wayland background and regenerate matugen themes"
+enabled = true
+entrypoint = "wallpaper"
+lifecycle_mode = "daemon"
+
+provides_general_suggestions = false
+prefix = "@wp"
+require_prefix = true
+build_dependencies = ["go"]
+capabilities = ["suggest", "preview"]
+icon = "preferences-desktop-wallpaper"
