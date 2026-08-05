@@ -70,13 +70,12 @@ Enable and run
 
 Configured checks (.pre-commit-config.yaml)
 - Pre-commit hooks: trailing-whitespace, end-of-file-fixer, check-yaml, check-added-large-files.
-- Go hooks (pre-commit-golang): go-fmt, go-imports, no-go-testing, golangci-lint, go-unit-tests.
+- Go hooks (pre-commit-golang): go-fmt, go-imports, no-go-testing, golangci-lint.
 
 Testing
 - Unit tests: `just test`
 - Verbose: `just test-verbose`
 - Coverage: `just test-cover`
-- You can also rely on the pre-commit go-unit-tests hook; it will run tests on commit.
 
 Project build/run tips
 - Config: `just config-generate --config-format toml` (or yaml, json).
