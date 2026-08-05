@@ -38,7 +38,8 @@ rather than hardcoding a path.
 2) For each input:
    - Write NDJSON line: `{ "type": "query", "client_id": "<id>", "text": "<input>" }\n`
    - Read NDJSON line: `{ "type": "ack", "query_id": "..." }\n`
-   - Read NDJSON update lines: `{ "type": "update", "query_id": "...", "payload": <snapshot> }\n`
+   - Read NDJSON update lines: `{ "type": "update", "query_id": "...", "payload": "<base64>" }\n`
+   - Base64-decode `payload` and parse the result as JSON to get the aggregate snapshot.
    - Replace your displayed snapshot with the latest one for that `query_id`.
 3) On exit, write NDJSON line `{ "type": "detach", "client_id": "<id>" }\n` (best-effort) to let the daemon purge memory.
 
@@ -68,8 +69,11 @@ When consuming daemon status metadata:
 - Ack (Daemon → UI, NDJSON line):
   - `{ "type": "ack", "query_id": "<id>" }`
 - Update (Daemon → UI, NDJSON line):
-  - `{ "type": "update", "query_id": "<id>", "payload": <AggregateSnapshot JSON> }`
-- AggregateSnapshot:
+  - `{ "type": "update", "query_id": "<id>", "payload": "<base64-encoded AggregateSnapshot JSON>" }`
+  - `payload` is Tarragon's Go `[]byte` field, which `encoding/json` marshals as a
+    standard base64 string, **not** an inline JSON object. Base64-decode it
+    first, then parse the decoded bytes as JSON to get the AggregateSnapshot.
+- AggregateSnapshot (after base64-decoding `payload`):
   - `{"query_id":"<id>","input":"<input>","started_at_unix_ms":<epoch-ms>,"results":{"<plugin>":{"elapsed_ms":<float>,"data":<plugin JSON>}, ...},"plugins":{"<plugin>":{"state":"pending|done|empty|error","count":<int>,"elapsed_ms":<float>,"error":"<message>"}},"list":[...]}`
 
 Plugin state meanings:
@@ -81,7 +85,7 @@ Plugin state meanings:
 ## Example: Python
 
 ```python
-import json, os, socket, uuid
+import base64, json, os, socket, uuid
 
 
 def resolve_ui_socket_path() -> str:
@@ -109,7 +113,9 @@ while True:
     if msg["type"] == "ack":
         print("query_id:", msg["query_id"])
     elif msg["type"] == "update":
-        print("snapshot:", json.dumps(msg["payload"], indent=2))
+        # payload is base64-encoded JSON; decode before parsing.
+        snapshot = json.loads(base64.b64decode(msg["payload"]))
+        print("snapshot:", json.dumps(snapshot, indent=2))
 ```
 
 ## Example: Go
@@ -136,6 +142,11 @@ var a struct{ QueryID string `json:"query_id"` }
 json.Unmarshal(scanner.Bytes(), &a)
 
 scanner.Scan()
-var upd struct{ Payload json.RawMessage `json:"payload"` }
+// Payload is []byte: encoding/json base64-decodes it automatically because
+// the wire value is a base64 string, not an inline JSON object.
+var upd struct{ Payload []byte `json:"payload"` }
 json.Unmarshal(scanner.Bytes(), &upd)
+
+var snapshot map[string]any
+json.Unmarshal(upd.Payload, &snapshot)
 ```
