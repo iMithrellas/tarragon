@@ -1,4 +1,4 @@
-module github.com/iMithrellas/tarragon
+module github.com/mithrel-dots/tarragon
 
 go 1.24.1
 

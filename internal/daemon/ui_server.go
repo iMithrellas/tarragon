@@ -13,9 +13,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/iMithrellas/tarragon/internal/db"
-	"github.com/iMithrellas/tarragon/internal/plugins"
-	"github.com/iMithrellas/tarragon/internal/wire"
+	"github.com/mithrel-dots/tarragon/internal/db"
+	"github.com/mithrel-dots/tarragon/internal/plugins"
+	"github.com/mithrel-dots/tarragon/internal/wire"
 	"github.com/spf13/viper"
 )
 

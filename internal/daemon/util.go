@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/iMithrellas/tarragon/internal/plugins"
-	"github.com/iMithrellas/tarragon/internal/wire"
+	"github.com/mithrel-dots/tarragon/internal/plugins"
+	"github.com/mithrel-dots/tarragon/internal/wire"
 )
 
 // invokeOnCallQuery runs an on-call plugin query command and returns its JSON output.

@@ -5,7 +5,7 @@ import (
 	"net"
 	"testing"
 
-	"github.com/iMithrellas/tarragon/internal/wire"
+	"github.com/mithrel-dots/tarragon/internal/wire"
 )
 
 func TestUIRegistryPublish(t *testing.T) {

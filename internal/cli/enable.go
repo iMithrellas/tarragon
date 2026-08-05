@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/iMithrellas/tarragon/internal/plugins"
+	"github.com/mithrel-dots/tarragon/internal/plugins"
 	"github.com/pelletier/go-toml/v2"
 	"github.com/spf13/cobra"
 )

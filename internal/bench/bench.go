@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/iMithrellas/tarragon/internal/texttable"
-	"github.com/iMithrellas/tarragon/internal/wire"
+	"github.com/mithrel-dots/tarragon/internal/texttable"
+	"github.com/mithrel-dots/tarragon/internal/wire"
 )
 
 type Options struct {

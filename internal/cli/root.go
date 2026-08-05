@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/iMithrellas/tarragon/internal/config"
+	"github.com/mithrel-dots/tarragon/internal/config"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )

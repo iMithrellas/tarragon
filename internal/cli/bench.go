@@ -3,8 +3,8 @@ package cli
 import (
 	"time"
 
-	"github.com/iMithrellas/tarragon/internal/bench"
-	"github.com/iMithrellas/tarragon/internal/wire"
+	"github.com/mithrel-dots/tarragon/internal/bench"
+	"github.com/mithrel-dots/tarragon/internal/wire"
 	"github.com/spf13/cobra"
 )
 

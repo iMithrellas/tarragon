@@ -7,7 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/iMithrellas/tarragon/internal/plugins"
+	"github.com/mithrel-dots/tarragon/internal/plugins"
 	"github.com/spf13/cobra"
 )
 

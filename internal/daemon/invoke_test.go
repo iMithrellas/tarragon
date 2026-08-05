@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/iMithrellas/tarragon/internal/plugins"
+	"github.com/mithrel-dots/tarragon/internal/plugins"
 )
 
 func writeScript(t *testing.T, dir, name, body string) string {

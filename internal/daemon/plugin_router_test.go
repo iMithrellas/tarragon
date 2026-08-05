@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iMithrellas/tarragon/internal/wire"
+	"github.com/mithrel-dots/tarragon/internal/wire"
 )
 
 func TestPluginRegistryBasic(t *testing.T) {

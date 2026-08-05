@@ -11,9 +11,9 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/iMithrellas/tarragon/internal/config"
-	"github.com/iMithrellas/tarragon/internal/plugins"
-	"github.com/iMithrellas/tarragon/internal/wire"
+	"github.com/mithrel-dots/tarragon/internal/config"
+	"github.com/mithrel-dots/tarragon/internal/plugins"
+	"github.com/mithrel-dots/tarragon/internal/wire"
 	"github.com/spf13/cobra"
 )
 

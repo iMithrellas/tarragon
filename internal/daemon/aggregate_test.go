@@ -8,8 +8,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/iMithrellas/tarragon/internal/db"
-	"github.com/iMithrellas/tarragon/internal/wire"
+	"github.com/mithrel-dots/tarragon/internal/db"
+	"github.com/mithrel-dots/tarragon/internal/wire"
 )
 
 func TestAggregateStoreCreateUpdateSnapshot(t *testing.T) {

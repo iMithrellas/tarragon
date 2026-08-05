@@ -74,11 +74,11 @@ See [docs/plugins.md](docs/plugins.md).
 
 ## Contributing
 
-Contributions are VERY welcome! See [https://github.com/iMithrellas/tarragon/blob/master/CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. Running pre-commit locally helps keep builds green and diffs clean <3.
+Contributions are VERY welcome! See [https://github.com/mithrel-dots/TarraGon/blob/master/CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. Running pre-commit locally helps keep builds green and diffs clean <3.
 
 ### Development TODO
 
-Moved to GitHub issue: Roadmap — https://github.com/iMithrellas/tarragon/issues/4
+Moved to GitHub issue: Roadmap — https://github.com/mithrel-dots/TarraGon/issues/4
 
 ## Shell Completions
 

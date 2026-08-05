@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iMithrellas/tarragon/internal/plugins"
-	"github.com/iMithrellas/tarragon/internal/wire"
+	"github.com/mithrel-dots/tarragon/internal/plugins"
+	"github.com/mithrel-dots/tarragon/internal/wire"
 )
 
 func TestPersistentPluginE2E(t *testing.T) {

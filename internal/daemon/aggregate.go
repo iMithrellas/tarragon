@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/iMithrellas/tarragon/internal/db"
-	"github.com/iMithrellas/tarragon/internal/wire"
+	"github.com/mithrel-dots/tarragon/internal/db"
+	"github.com/mithrel-dots/tarragon/internal/wire"
 )
 
 // aggregate store keeps full results per query for streaming snapshots

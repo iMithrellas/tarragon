@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/iMithrellas/tarragon/internal/db"
+	"github.com/mithrel-dots/tarragon/internal/db"
 	"github.com/spf13/viper"
 )
 

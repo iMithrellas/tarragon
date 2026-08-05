@@ -2,7 +2,7 @@
 package main
 
 import (
-	"github.com/iMithrellas/tarragon/internal/cli"
+	"github.com/mithrel-dots/tarragon/internal/cli"
 	"log"
 )
 

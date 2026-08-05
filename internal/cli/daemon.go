@@ -1,7 +1,7 @@
 package cli
 
 import (
-	"github.com/iMithrellas/tarragon/internal/daemon"
+	"github.com/mithrel-dots/tarragon/internal/daemon"
 	"github.com/spf13/cobra"
 )
 

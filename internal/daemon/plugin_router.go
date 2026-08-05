@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/iMithrellas/tarragon/internal/wire"
+	"github.com/mithrel-dots/tarragon/internal/wire"
 )
 
 // pluginRegistry tracks connected plugins by name.
