@@ -136,7 +136,8 @@ Entrypoint path rules:
 
 ## Unix Domain Socket + NDJSON Protocol
 
-Endpoint: `/tmp/tarragon-plugins.sock` (daemon listener)
+Endpoint: resolved by the daemon at startup (see "Socket Locations" below) and
+passed to persistent plugins via `TARRAGON_PLUGINS_ENDPOINT`.
 
 Protocol:
 1) Connect to the Unix socket path from `TARRAGON_PLUGINS_ENDPOINT`.
@@ -153,15 +154,29 @@ NDJSON framing means each message is exactly one JSON object on one line, termin
 The daemon measures latency and merges your response into the shared result snapshot. UIs also receive per-plugin query state metadata derived from dispatch/response events so they can show pending, empty, and error states while a query is still in flight.
 
 Environment variables passed to persistent plugins:
-- `TARRAGON_PLUGINS_ENDPOINT`: Unix socket path to connect to (for example, `/tmp/tarragon-plugins.sock`).
+- `TARRAGON_PLUGINS_ENDPOINT`: Unix socket path to connect to (for example, `/run/user/1000/tarragon/plugins.sock`).
 - `TARRAGON_PLUGIN_NAME`: The configured plugin name.
+
+### Socket Locations
+
+The daemon resolves the plugins socket path at startup, in order:
+
+1. `TARRAGON_PLUGINS_SOCKET`, if set and non-empty, is used verbatim.
+2. Otherwise, if `XDG_RUNTIME_DIR` is set and non-empty:
+   `$XDG_RUNTIME_DIR/tarragon/plugins.sock`.
+3. Otherwise: `/tmp/tarragon-<euid>/plugins.sock` (`<euid>` is the daemon's
+   effective UID).
+
+The daemon creates the parent directory with mode `0700` before listening, and
+removes a stale leftover socket file if one is present. Persistent plugins
+should not hardcode a socket path; always read `TARRAGON_PLUGINS_ENDPOINT`.
 
 ### Python skeleton
 
 ```python
 import json, os, socket
 
-endpoint = os.environ.get("TARRAGON_PLUGINS_ENDPOINT", "/tmp/tarragon-plugins.sock")
+endpoint = os.environ["TARRAGON_PLUGINS_ENDPOINT"]  # always set by the daemon for persistent plugins
 name = os.environ.get("TARRAGON_PLUGIN_NAME", "my_plugin")
 
 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -187,8 +202,8 @@ while True:
 use std::os::unix::net::UnixStream;
 use std::io::{BufRead, BufReader, Write};
 
-let endpoint = std::env::var("TARRAGON_PLUGINS_ENDPOINT")
-    .unwrap_or("/tmp/tarragon-plugins.sock".into());
+// Always set by the daemon for persistent plugins.
+let endpoint = std::env::var("TARRAGON_PLUGINS_ENDPOINT")?;
 let stream = UnixStream::connect(&endpoint)?;
 let mut writer = stream.try_clone()?;
 let reader = BufReader::new(stream);

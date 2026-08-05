@@ -14,11 +14,27 @@ This guide explains how to build a UI that talks to the Tarragon daemon over a U
 
 ## Endpoints
 
-- UI ↔ Daemon (single bidirectional connection): `/tmp/tarragon-ui.sock`
+- UI ↔ Daemon (single bidirectional connection): resolved by the daemon at
+  startup (see "Socket Location" below).
+
+### Socket Location
+
+The daemon resolves the UI socket path at startup, in order:
+
+1. `TARRAGON_UI_SOCKET`, if set and non-empty, is used verbatim.
+2. Otherwise, if `XDG_RUNTIME_DIR` is set and non-empty:
+   `$XDG_RUNTIME_DIR/tarragon/ui.sock`.
+3. Otherwise: `/tmp/tarragon-<euid>/ui.sock` (`<euid>` is the daemon's
+   effective UID).
+
+The daemon creates the parent directory with mode `0700` before listening, and
+removes a stale leftover socket file if one is present. UI clients should
+implement the same resolution order (or read `TARRAGON_UI_SOCKET` directly)
+rather than hardcoding a path.
 
 ## Minimal Flow
 
-1) Connect to Unix socket at `/tmp/tarragon-ui.sock`.
+1) Connect to the resolved UI Unix socket path (see above).
 2) For each input:
    - Write NDJSON line: `{ "type": "query", "client_id": "<id>", "text": "<input>" }\n`
    - Read NDJSON line: `{ "type": "ack", "query_id": "..." }\n`
@@ -65,10 +81,19 @@ Plugin state meanings:
 ## Example: Python
 
 ```python
-import json, socket, uuid
+import json, os, socket, uuid
+
+
+def resolve_ui_socket_path() -> str:
+    if override := os.environ.get("TARRAGON_UI_SOCKET"):
+        return override
+    if runtime_dir := os.environ.get("XDG_RUNTIME_DIR"):
+        return os.path.join(runtime_dir, "tarragon", "ui.sock")
+    return f"/tmp/tarragon-{os.geteuid()}/ui.sock"
+
 
 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.connect("/tmp/tarragon-ui.sock")
+s.connect(resolve_ui_socket_path())
 f = s.makefile('r')
 
 client_id = f"cli-{uuid.uuid4()}"
@@ -90,7 +115,17 @@ while True:
 ## Example: Go
 
 ```
-conn, _ := net.Dial("unix", "/tmp/tarragon-ui.sock")
+func resolveUISocketPath() string {
+	if v := os.Getenv("TARRAGON_UI_SOCKET"); v != "" {
+		return v
+	}
+	if dir := os.Getenv("XDG_RUNTIME_DIR"); dir != "" {
+		return filepath.Join(dir, "tarragon", "ui.sock")
+	}
+	return fmt.Sprintf("/tmp/tarragon-%d/ui.sock", os.Geteuid())
+}
+
+conn, _ := net.Dial("unix", resolveUISocketPath())
 scanner := bufio.NewScanner(conn)
 
 query, _ := json.Marshal(map[string]any{"type":"query","client_id":"cli-1","text":"hello"})
