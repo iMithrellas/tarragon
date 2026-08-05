@@ -69,7 +69,7 @@ configured plugin_stop_timeout.`,
 func sendRestart(plugin string) (wire.RestartResponse, error) {
 	var resp wire.RestartResponse
 
-	conn, err := net.DialTimeout("unix", wire.SocketUI, 2*time.Second)
+	conn, err := net.DialTimeout("unix", wire.ResolveUISocketPath(), 2*time.Second)
 	if err != nil {
 		return resp, err
 	}

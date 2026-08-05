@@ -87,17 +87,18 @@ type pluginRequest struct {
 }
 
 func startPluginListener(ctx context.Context, store *aggregateStore, ui *uiRegistry) (chan<- pluginRequest, *pluginRegistry) {
-	ln, err := wire.ListenUnix(wire.SocketPlugins)
+	socketPath := wire.ResolvePluginsSocketPath()
+	ln, err := wire.ListenUnix(socketPath)
 	if err != nil {
-		log.Fatalf("[PLUGINS] Failed to listen on %s: %v", wire.SocketPlugins, err)
+		log.Fatalf("[PLUGINS] Failed to listen on %s: %v", socketPath, err)
 	}
 	go func() {
 		<-ctx.Done()
 		_ = ln.Close()
-		_ = wire.CleanupSocket(wire.SocketPlugins)
+		_ = wire.CleanupSocket(socketPath)
 	}()
 
-	log.Printf("[PLUGINS] listening on %s", wire.SocketPlugins)
+	log.Printf("[PLUGINS] listening on %s", socketPath)
 	registry := &pluginRegistry{conns: make(map[string]net.Conn), scanners: make(map[string]*bufio.Scanner)}
 
 	type timingStore struct {

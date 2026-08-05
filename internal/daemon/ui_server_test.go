@@ -37,7 +37,7 @@ func TestUIServer_AckAndUpdateOverUDS(t *testing.T) {
 	var conn net.Conn
 	var err error
 	for time.Now().Before(deadline) {
-		conn, err = net.Dial("unix", wire.SocketUI)
+		conn, err = net.Dial("unix", wire.ResolveUISocketPath())
 		if err == nil {
 			break
 		}
@@ -122,7 +122,7 @@ func TestUIServer_SelectAndDetachAck(t *testing.T) {
 	var conn net.Conn
 	var err error
 	for time.Now().Before(deadline) {
-		conn, err = net.Dial("unix", wire.SocketUI)
+		conn, err = net.Dial("unix", wire.ResolveUISocketPath())
 		if err == nil {
 			break
 		}
@@ -211,7 +211,7 @@ func TestUIServer_StatusIncludesPluginSourceMetadata(t *testing.T) {
 	var conn net.Conn
 	var err error
 	for time.Now().Before(deadline) {
-		conn, err = net.Dial("unix", wire.SocketUI)
+		conn, err = net.Dial("unix", wire.ResolveUISocketPath())
 		if err == nil {
 			break
 		}
@@ -272,7 +272,7 @@ func TestUIServer_OnCallSelectInvokesCLI(t *testing.T) {
 	var conn net.Conn
 	var err error
 	for time.Now().Before(deadline) {
-		conn, err = net.Dial("unix", wire.SocketUI)
+		conn, err = net.Dial("unix", wire.ResolveUISocketPath())
 		if err == nil {
 			break
 		}

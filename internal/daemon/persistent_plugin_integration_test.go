@@ -12,11 +12,13 @@ import (
 )
 
 func TestPersistentPluginE2E(t *testing.T) {
-	_ = wire.CleanupSocket(wire.SocketPlugins)
-	_ = wire.CleanupSocket(wire.SocketUI)
+	pluginsSocket := wire.ResolvePluginsSocketPath()
+	uiSocket := wire.ResolveUISocketPath()
+	_ = wire.CleanupSocket(pluginsSocket)
+	_ = wire.CleanupSocket(uiSocket)
 	defer func() {
-		_ = wire.CleanupSocket(wire.SocketPlugins)
-		_ = wire.CleanupSocket(wire.SocketUI)
+		_ = wire.CleanupSocket(pluginsSocket)
+		_ = wire.CleanupSocket(uiSocket)
 	}()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -41,7 +43,7 @@ func TestPersistentPluginE2E(t *testing.T) {
 	pluginReqCh := make(chan wire.PluginRequest, 1)
 	pluginErrCh := make(chan error, 1)
 	go func() {
-		conn, err := dialUnixWithRetry(wire.SocketPlugins, 3*time.Second)
+		conn, err := dialUnixWithRetry(pluginsSocket, 3*time.Second)
 		if err != nil {
 			pluginErrCh <- err
 			return
@@ -71,7 +73,7 @@ func TestPersistentPluginE2E(t *testing.T) {
 		}
 	}()
 
-	uiConn, err := dialUnixWithRetry(wire.SocketUI, 3*time.Second)
+	uiConn, err := dialUnixWithRetry(uiSocket, 3*time.Second)
 	if err != nil {
 		t.Fatalf("dial ui socket: %v", err)
 	}

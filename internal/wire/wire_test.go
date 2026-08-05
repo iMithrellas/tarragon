@@ -3,7 +3,9 @@ package wire
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -99,4 +101,116 @@ func TestListenUnix(t *testing.T) {
 		t.Fatalf("listen: %v", err)
 	}
 	_ = ln.Close()
+}
+
+func TestListenUnixCreatesDirWithSecureMode(t *testing.T) {
+	dir := t.TempDir()
+	sockDir := filepath.Join(dir, "tarragon")
+	path := filepath.Join(sockDir, "ui.sock")
+
+	ln, err := ListenUnix(path)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer func() { _ = ln.Close() }()
+
+	fi, err := os.Stat(sockDir)
+	if err != nil {
+		t.Fatalf("stat socket dir: %v", err)
+	}
+	if !fi.IsDir() {
+		t.Fatalf("expected %s to be a directory", sockDir)
+	}
+	if perm := fi.Mode().Perm(); perm != 0o700 {
+		t.Fatalf("expected socket dir mode 0700, got %o", perm)
+	}
+}
+
+func TestListenUnixRemovesStaleSocket(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "stale.sock")
+
+	// Simulate a stale socket file left behind by a crashed daemon: a real
+	// unix listener whose socket file is not unlinked on close.
+	addr, err := net.ResolveUnixAddr("unix", path)
+	if err != nil {
+		t.Fatalf("resolve addr: %v", err)
+	}
+	stale, err := net.ListenUnix("unix", addr)
+	if err != nil {
+		t.Fatalf("create stale listener: %v", err)
+	}
+	stale.SetUnlinkOnClose(false)
+	if err := stale.Close(); err != nil {
+		t.Fatalf("close stale listener: %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("expected stale socket file to remain, stat err=%v", err)
+	}
+
+	second, err := ListenUnix(path)
+	if err != nil {
+		t.Fatalf("second listen should remove stale socket and succeed: %v", err)
+	}
+	_ = second.Close()
+}
+
+func TestResolveUISocketPath(t *testing.T) {
+	t.Setenv(envUISocket, "")
+	t.Setenv(envXDGRuntimeDir, "")
+
+	t.Run("env override wins", func(t *testing.T) {
+		t.Setenv(envUISocket, "/custom/ui.sock")
+		if got := ResolveUISocketPath(); got != "/custom/ui.sock" {
+			t.Fatalf("expected override path, got %q", got)
+		}
+	})
+
+	t.Run("xdg runtime dir when no override", func(t *testing.T) {
+		t.Setenv(envUISocket, "")
+		t.Setenv(envXDGRuntimeDir, "/run/user/1000")
+		want := "/run/user/1000/tarragon/ui.sock"
+		if got := ResolveUISocketPath(); got != want {
+			t.Fatalf("expected %q, got %q", want, got)
+		}
+	})
+
+	t.Run("fallback to euid tmp dir", func(t *testing.T) {
+		t.Setenv(envUISocket, "")
+		t.Setenv(envXDGRuntimeDir, "")
+		want := fmt.Sprintf("/tmp/tarragon-%d/ui.sock", os.Geteuid())
+		if got := ResolveUISocketPath(); got != want {
+			t.Fatalf("expected %q, got %q", want, got)
+		}
+	})
+}
+
+func TestResolvePluginsSocketPath(t *testing.T) {
+	t.Setenv(envPluginsSocket, "")
+	t.Setenv(envXDGRuntimeDir, "")
+
+	t.Run("env override wins", func(t *testing.T) {
+		t.Setenv(envPluginsSocket, "/custom/plugins.sock")
+		if got := ResolvePluginsSocketPath(); got != "/custom/plugins.sock" {
+			t.Fatalf("expected override path, got %q", got)
+		}
+	})
+
+	t.Run("xdg runtime dir when no override", func(t *testing.T) {
+		t.Setenv(envPluginsSocket, "")
+		t.Setenv(envXDGRuntimeDir, "/run/user/1000")
+		want := "/run/user/1000/tarragon/plugins.sock"
+		if got := ResolvePluginsSocketPath(); got != want {
+			t.Fatalf("expected %q, got %q", want, got)
+		}
+	})
+
+	t.Run("fallback to euid tmp dir", func(t *testing.T) {
+		t.Setenv(envPluginsSocket, "")
+		t.Setenv(envXDGRuntimeDir, "")
+		want := fmt.Sprintf("/tmp/tarragon-%d/plugins.sock", os.Geteuid())
+		if got := ResolvePluginsSocketPath(); got != want {
+			t.Fatalf("expected %q, got %q", want, got)
+		}
+	})
 }

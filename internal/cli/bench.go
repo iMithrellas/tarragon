@@ -39,6 +39,6 @@ func init() {
 	benchCmd.Flags().DurationVar(&benchTimeout, "timeout", 2*time.Second, "Timeout per query")
 	benchCmd.Flags().Int64Var(&benchSeed, "seed", 0, "Random seed (default: time-based)")
 	benchCmd.Flags().Float64Var(&benchWorstPct, "worst-pct", 99, "Percentile for latency reporting")
-	benchCmd.Flags().StringVar(&benchSocket, "socket", wire.SocketUI, "Daemon UI Unix socket path")
+	benchCmd.Flags().StringVar(&benchSocket, "socket", wire.ResolveUISocketPath(), "Daemon UI Unix socket path")
 	rootCmd.AddCommand(benchCmd)
 }

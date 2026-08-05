@@ -122,7 +122,7 @@ var pluginConfigCmd = &cobra.Command{
 }
 
 func sendReload() (bool, string, error) {
-	conn, err := net.DialTimeout("unix", wire.SocketUI, 2*time.Second)
+	conn, err := net.DialTimeout("unix", wire.ResolveUISocketPath(), 2*time.Second)
 	if err != nil {
 		return false, "", err
 	}

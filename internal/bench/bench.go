@@ -104,7 +104,7 @@ func run(opts options, out io.Writer) error {
 		opts.worstPct = 99
 	}
 	if opts.socket == "" {
-		opts.socket = wire.SocketUI
+		opts.socket = wire.ResolveUISocketPath()
 	}
 
 	c := &client{

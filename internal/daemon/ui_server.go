@@ -91,16 +91,17 @@ func (r *uiRegistry) publish(msg any) {
 }
 
 func startUIServer(ctx context.Context, mgr *plugins.Manager, reqOut chan<- pluginRequest, pluginsReg *pluginRegistry, store *aggregateStore, ui *uiRegistry, frecencyDB *db.DB) {
-	ln, err := wire.ListenUnix(wire.SocketUI)
+	socketPath := wire.ResolveUISocketPath()
+	ln, err := wire.ListenUnix(socketPath)
 	if err != nil {
-		log.Fatalf("[UI] failed to listen on %s: %v", wire.SocketUI, err)
+		log.Fatalf("[UI] failed to listen on %s: %v", socketPath, err)
 	}
 	go func() {
 		<-ctx.Done()
 		_ = ln.Close()
-		_ = wire.CleanupSocket(wire.SocketUI)
+		_ = wire.CleanupSocket(socketPath)
 	}()
-	log.Printf("[UI] listening on %s", wire.SocketUI)
+	log.Printf("[UI] listening on %s", socketPath)
 
 	for {
 		conn, err := ln.Accept()
@@ -293,7 +294,7 @@ func handleUIClient(ctx context.Context, conn net.Conn, mgr *plugins.Manager, re
 			}
 
 			if startPersistent {
-				if err := mgr.StartPersistent(ctx, wire.SocketPlugins); err != nil {
+				if err := mgr.StartPersistent(ctx, wire.ResolvePluginsSocketPath()); err != nil {
 					_ = wire.WriteMsg(conn, &wire.ReloadResponse{Type: "reload_response", Success: false, Message: fmt.Sprintf("reload applied, but failed to start daemon plugins: %v", err)})
 					continue
 				}
@@ -328,7 +329,7 @@ func handleUIClient(ctx context.Context, conn net.Conn, mgr *plugins.Manager, re
 				targets = []string{parsed.Plugin}
 			}
 
-			results := mgr.Restart(ctx, wire.SocketPlugins, targets)
+			results := mgr.Restart(ctx, wire.ResolvePluginsSocketPath(), targets)
 
 			wireResults := make([]wire.RestartResult, 0, len(results))
 			failed := 0
@@ -430,7 +431,7 @@ func dispatchQuery(ctx context.Context, queryText, qid string, mgr *plugins.Mana
 		}
 
 		if snap.cfg.Lifecycle == plugins.LifecycleOnDemandPersistent && !pluginsReg.isConnected(snap.name) {
-			if err := mgr.StartOnDemand(ctx, snap.name, wire.SocketPlugins); err != nil {
+			if err := mgr.StartOnDemand(ctx, snap.name, wire.ResolvePluginsSocketPath()); err != nil {
 				log.Printf("[UI] failed to start on-demand plugin %s: %v", snap.name, err)
 				if updateSnap, ok := store.markPluginError(qid, snap.name, 0, err.Error()); ok {
 					ui.publish(&wire.UpdateMessage{Type: "update", QueryID: qid, Payload: updateSnap})

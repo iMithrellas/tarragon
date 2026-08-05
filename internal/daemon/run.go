@@ -75,7 +75,7 @@ func RunDaemon() {
 	}
 
 	// Now start persistent plugin processes; the listener is already up.
-	if err := mgr.StartPersistent(ctx, wire.SocketPlugins); err != nil {
+	if err := mgr.StartPersistent(ctx, wire.ResolvePluginsSocketPath()); err != nil {
 		log.Printf("Plugin start error: %v", err)
 	}
 

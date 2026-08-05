@@ -84,7 +84,7 @@ func TestPluginListener_SendSelectRequestShape(t *testing.T) {
 	uiReg := newUIRegistry()
 	reqOut, reg := startPluginListener(ctx, store, uiReg)
 
-	conn, err := dialUnixWithRetry(wire.SocketPlugins, 2*time.Second)
+	conn, err := dialUnixWithRetry(wire.ResolvePluginsSocketPath(), 2*time.Second)
 	if err != nil {
 		t.Fatalf("dial plugin socket: %v", err)
 	}

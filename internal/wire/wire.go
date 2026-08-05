@@ -8,13 +8,47 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 )
 
-// Unix socket paths used across daemon and clients.
+// Environment variables that override the resolved socket paths.
 const (
-	SocketUI      = "/tmp/tarragon-ui.sock"
-	SocketPlugins = "/tmp/tarragon-plugins.sock"
+	envUISocket      = "TARRAGON_UI_SOCKET"
+	envPluginsSocket = "TARRAGON_PLUGINS_SOCKET"
+	envXDGRuntimeDir = "XDG_RUNTIME_DIR"
 )
+
+// ResolveUISocketPath returns the Unix socket path the daemon listens on for
+// UI connections, and that UI clients should dial.
+//
+// Resolution order:
+//  1. TARRAGON_UI_SOCKET, if set and non-empty, is returned verbatim.
+//  2. XDG_RUNTIME_DIR, if set and non-empty, yields "{XDG_RUNTIME_DIR}/tarragon/ui.sock".
+//  3. Otherwise, "/tmp/tarragon-{euid}/ui.sock".
+func ResolveUISocketPath() string {
+	return resolveSocketPath(envUISocket, "ui.sock")
+}
+
+// ResolvePluginsSocketPath returns the Unix socket path the daemon listens on
+// for plugin connections, and that plugin processes should dial.
+//
+// Resolution order:
+//  1. TARRAGON_PLUGINS_SOCKET, if set and non-empty, is returned verbatim.
+//  2. XDG_RUNTIME_DIR, if set and non-empty, yields "{XDG_RUNTIME_DIR}/tarragon/plugins.sock".
+//  3. Otherwise, "/tmp/tarragon-{euid}/plugins.sock".
+func ResolvePluginsSocketPath() string {
+	return resolveSocketPath(envPluginsSocket, "plugins.sock")
+}
+
+func resolveSocketPath(overrideEnv, filename string) string {
+	if v := os.Getenv(overrideEnv); v != "" {
+		return v
+	}
+	if dir := os.Getenv(envXDGRuntimeDir); dir != "" {
+		return filepath.Join(dir, "tarragon", filename)
+	}
+	return filepath.Join(fmt.Sprintf("/tmp/tarragon-%d", os.Geteuid()), filename)
+}
 
 // Message type constants (for plugins)
 const (
@@ -211,8 +245,16 @@ func CleanupSocket(path string) error {
 	return os.Remove(path)
 }
 
-// ListenUnix creates a unix listener after cleaning up stale socket files.
+// ListenUnix creates a unix listener after ensuring the parent directory
+// exists with mode 0700 and cleaning up a stale socket file, if present.
 func ListenUnix(path string) (net.Listener, error) {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, fmt.Errorf("create socket directory: %w", err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return nil, fmt.Errorf("secure socket directory: %w", err)
+	}
 	if err := CleanupSocket(path); err != nil {
 		return nil, err
 	}

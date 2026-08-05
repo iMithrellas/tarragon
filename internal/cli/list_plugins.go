@@ -104,7 +104,7 @@ var listPluginsCmd = &cobra.Command{
 }
 
 func loadedPluginsFromDaemon(timeout time.Duration) (map[string]wire.PluginInfo, bool) {
-	conn, err := net.DialTimeout("unix", wire.SocketUI, timeout)
+	conn, err := net.DialTimeout("unix", wire.ResolveUISocketPath(), timeout)
 	if err != nil {
 		return nil, false
 	}
