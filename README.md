@@ -115,35 +115,18 @@ Moved to GitHub issue: Roadmap — https://github.com/mithrel-dots/TarraGon/issu
 
 ## Shell Completions
 
-Generate completion scripts to a user-writable data dir and source them from your shell config.
-
-- Target directory: `$XDG_DATA_HOME/tarragon/completions` (fallback: `~/.local/share/tarragon/completions`)
+Generate a completion script for one shell to stdout and redirect it to the location used by your shell.
 
 ```bash
-tarragon completion generate bash
-tarragon completion generate zsh fish
+tarragon completion generate zsh > ~/.zsh/completions/_tarragon
 ```
 
-Source in your shell config
+Other examples:
 
-- Bash (add to `~/.bashrc`):
-```
-source "${XDG_DATA_HOME:-$HOME/.local/share}/tarragon/completions/tarragon.bash"
-```
-
-- Zsh (add to `~/.zshrc`):
-```
-source "${XDG_DATA_HOME:-$HOME/.local/share}/tarragon/completions/tarragon.zsh"
-```
-
-- Fish (add to `~/.config/fish/config.fish`):
-```
-source (string join '' $XDG_DATA_HOME '/tarragon/completions/tarragon.fish' ^/dev/null); or source ~/.local/share/tarragon/completions/tarragon.fish
-```
-
-- PowerShell (add to `$PROFILE`):
-```
-if ($env:XDG_DATA_HOME) { . "$env:XDG_DATA_HOME/tarragon/completions/tarragon.ps1" } else { . "$HOME/.local/share/tarragon/completions/tarragon.ps1" }
+```bash
+tarragon completion generate bash > ~/.local/share/bash-completion/completions/tarragon
+tarragon completion generate fish > ~/.config/fish/completions/tarragon.fish
+tarragon completion generate powershell > tarragon.ps1
 ```
 
 
