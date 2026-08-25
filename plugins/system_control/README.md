@@ -3,9 +3,12 @@
 Control the current systemd session from Tarragon. The plugin exposes lock,
 suspend, hibernate, suspend-then-hibernate, reboot, and power-off actions.
 
-The `@system` prefix is required. Typing only `@system` lists every action;
+The `@sys` prefix is required. Typing only `@sys` lists every action;
 additional text filters by labels, descriptions, and common terms such as
 `sleep`, `restart`, and `shutdown`.
+
+The manifest declares the bare token `sys`; the leading symbol comes from the
+`prefix_symbol` config option and defaults to `@`.
 
 ## Commands
 

@@ -267,11 +267,11 @@ func collectPluginConfigRows() ([]pluginConfigRow, error) {
 			Name:        eff.Config.Name,
 			Enabled:     eff.Config.Enabled,
 			Lifecycle:   eff.Config.Lifecycle,
-			Prefix:      eff.Config.Prefix,
+			Prefix:      eff.Config.ResolvedPrefix,
 			Description: eff.Config.Description,
 			EnabledOv:   eff.Config.Enabled != base.Config.Enabled,
 			LifecycleOv: eff.Config.Lifecycle != base.Config.Lifecycle,
-			PrefixOv:    eff.Config.Prefix != base.Config.Prefix,
+			PrefixOv:    eff.Config.ResolvedPrefix != base.Config.ResolvedPrefix,
 		})
 	}
 

@@ -681,3 +681,67 @@ func TestDispatchQuery_ExplicitTargetBypassesGeneralEligibility(t *testing.T) {
 		t.Fatalf("unexpected expected-plugin set: target=%v other=%v", hasTarget, hasOther)
 	}
 }
+
+func TestResolvePrefixTarget(t *testing.T) {
+	mgr := &plugins.Manager{Plugins: map[string]*plugins.Plugin{
+		"calculator":     {Config: plugins.PluginConfig{ID: "calculator", Enabled: true, Prefix: "calc"}},
+		"file_finder":    {Config: plugins.PluginConfig{ID: "file_finder", Enabled: true, Prefix: "f"}},
+		"system_control": {Config: plugins.PluginConfig{ID: "system_control", Enabled: true, Prefix: "sys"}},
+		"disabled":       {Config: plugins.PluginConfig{ID: "disabled", Enabled: false, Prefix: "d"}},
+		"noprefix":       {Config: plugins.PluginConfig{ID: "noprefix", Enabled: true}},
+	}}
+	mgr.ResolvePrefixes()
+
+	cases := []struct {
+		input      string
+		wantTarget string
+		wantText   string
+		wantFound  bool
+	}{
+		{"@calc 2+2", "calculator", "2+2", true},
+		{"@sys reboot", "system_control", "reboot", true},
+		{"@f report", "file_finder", "report", true},
+		{"  @calc  2+2  ", "calculator", "2+2", true},
+		{"@calc", "calculator", "", true},
+		{"calc 2+2", "", "", false},
+		{"@d hidden", "", "", false},
+		{"@unknown thing", "", "", false},
+		{"", "", "", false},
+	}
+
+	for _, tc := range cases {
+		target, text, found := resolvePrefixTarget(tc.input, mgr)
+		if found != tc.wantFound || target != tc.wantTarget || text != tc.wantText {
+			t.Errorf("resolvePrefixTarget(%q) = (%q, %q, %v), want (%q, %q, %v)",
+				tc.input, target, text, found, tc.wantTarget, tc.wantText, tc.wantFound)
+		}
+	}
+}
+
+func TestResolvePrefixTargetPrefersLongestPrefix(t *testing.T) {
+	mgr := &plugins.Manager{Plugins: map[string]*plugins.Plugin{
+		"short": {Config: plugins.PluginConfig{ID: "short", Enabled: true, Prefix: "s"}},
+		"long":  {Config: plugins.PluginConfig{ID: "long", Enabled: true, Prefix: "sys"}},
+	}}
+	mgr.ResolvePrefixes()
+
+	target, text, found := resolvePrefixTarget("@sys reboot", mgr)
+	if !found || target != "long" || text != "reboot" {
+		t.Fatalf("expected longest prefix to win, got (%q, %q, %v)", target, text, found)
+	}
+}
+
+func TestResolvePrefixTargetBreaksTiesDeterministically(t *testing.T) {
+	mgr := &plugins.Manager{Plugins: map[string]*plugins.Plugin{
+		"zeta":  {Config: plugins.PluginConfig{ID: "zeta", Enabled: true, Prefix: "x"}},
+		"alpha": {Config: plugins.PluginConfig{ID: "alpha", Enabled: true, Prefix: "x"}},
+	}}
+	mgr.ResolvePrefixes()
+
+	for i := 0; i < 50; i++ {
+		target, _, found := resolvePrefixTarget("@x thing", mgr)
+		if !found || target != "alpha" {
+			t.Fatalf("expected stable tie-break to alpha, got %q (found=%v)", target, found)
+		}
+	}
+}

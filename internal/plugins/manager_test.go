@@ -401,3 +401,99 @@ func pluginKeys(m *Manager) []string {
 	sort.Strings(keys)
 	return keys
 }
+
+func TestResolvePrefix(t *testing.T) {
+	cases := []struct {
+		prefix string
+		symbol string
+		want   string
+	}{
+		{"calc", "@", "@calc"},
+		{"calc", ":", ":calc"},
+		{" calc ", "@", "@calc"},
+		{"", "@", ""},
+		{"@calc", "@", "@calc"},
+		{"@calc", ":", "@calc"},
+		{"=", "@", "="},
+		{"calc", "", "calc"},
+		{"2fa", "@", "@2fa"},
+	}
+	for _, tc := range cases {
+		if got := ResolvePrefix(tc.prefix, tc.symbol); got != tc.want {
+			t.Errorf("ResolvePrefix(%q, %q) = %q, want %q", tc.prefix, tc.symbol, got, tc.want)
+		}
+	}
+}
+
+func TestApplyOverridesResolvesPrefixWithConfiguredSymbol(t *testing.T) {
+	viper.Reset()
+	defer viper.Reset()
+
+	root := t.TempDir()
+	writeManifest(t, root, "calculator", "name=\"calculator\"\nentrypoint=\"run.sh\"\nenabled=true\nprefix=\"calc\"\n")
+
+	m := NewManager(root)
+	if err := m.Discover(); err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+
+	viper.Set("prefix_symbol", ":")
+	if err := m.ApplyOverrides(); err != nil {
+		t.Fatalf("apply overrides: %v", err)
+	}
+	if got := m.Plugins["calculator"].Config.ResolvedPrefix; got != ":calc" {
+		t.Fatalf("expected configured symbol to apply, got %q", got)
+	}
+
+	viper.Set("prefix_symbol", "")
+	if err := m.ApplyOverrides(); err != nil {
+		t.Fatalf("apply overrides: %v", err)
+	}
+	if got := m.Plugins["calculator"].Config.ResolvedPrefix; got != "@calc" {
+		t.Fatalf("expected default symbol when unset, got %q", got)
+	}
+}
+
+func TestApplyOverridesKeepsLiteralPrefixFromOverride(t *testing.T) {
+	viper.Reset()
+	defer viper.Reset()
+
+	root := t.TempDir()
+	writeManifest(t, root, "calculator", "name=\"calculator\"\nentrypoint=\"run.sh\"\nenabled=true\nprefix=\"calc\"\n")
+
+	m := NewManager(root)
+	if err := m.Discover(); err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	viper.Set("plugins.calculator.prefix", "=")
+	if err := m.ApplyOverrides(); err != nil {
+		t.Fatalf("apply overrides: %v", err)
+	}
+	if got := m.Plugins["calculator"].Config.ResolvedPrefix; got != "=" {
+		t.Fatalf("expected literal override to bypass the symbol, got %q", got)
+	}
+}
+
+func TestPrefixCollisionsReportsDuplicates(t *testing.T) {
+	viper.Reset()
+	defer viper.Reset()
+
+	m := &Manager{Plugins: map[string]*Plugin{
+		"beta":     {Config: PluginConfig{ID: "beta", Enabled: true, Prefix: "x"}},
+		"alpha":    {Config: PluginConfig{ID: "alpha", Enabled: true, Prefix: "x"}},
+		"disabled": {Config: PluginConfig{ID: "disabled", Enabled: false, Prefix: "x"}},
+		"unique":   {Config: PluginConfig{ID: "unique", Enabled: true, Prefix: "y"}},
+	}}
+	m.ResolvePrefixes()
+
+	collisions := m.PrefixCollisions()
+	if len(collisions) != 1 {
+		t.Fatalf("expected exactly one collision, got %v", collisions)
+	}
+	if !strings.Contains(collisions[0], "@x") || !strings.Contains(collisions[0], "alpha, beta") {
+		t.Fatalf("unexpected collision message: %q", collisions[0])
+	}
+	if strings.Contains(collisions[0], "disabled") {
+		t.Fatalf("disabled plugins must not collide: %q", collisions[0])
+	}
+}

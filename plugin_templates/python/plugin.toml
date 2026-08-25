@@ -6,7 +6,7 @@ entrypoint = "template_plugin.py"
 lifecycle_mode = "daemon"
 
 provides_general_suggestions = true
-prefix = "@tpl"
+prefix = "tpl"
 build_dependencies = ["python3"]
 capabilities = ["suggest"]
 icon = ""

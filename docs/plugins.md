@@ -84,7 +84,7 @@ entrypoint = "template_plugin.py"
 lifecycle_mode = "daemon"  # "daemon" | "on_demand_persistent" | "on_call"
 
 provides_general_suggestions = true
-prefix = "@tpl"
+prefix = "tpl"  # typed as @tpl with the default prefix_symbol
 build_dependencies = ["python3"]
 capabilities = ["suggest"]
 ```
@@ -97,7 +97,7 @@ enabled = true
 entrypoint = "calc_plugin_executable"  # Relative for local plugins; may be absolute for system-enabled plugins
 lifecycle_mode = "on_demand_persistent"  # Options: "daemon", "on_demand_persistent", "on_call"
 provides_general_suggestions = true  # Responds to input without a prefix?
-prefix = "@calc"  # Optional: Prefix to force this plugin
+prefix = "calc"  # Optional: bare token; the prefix_symbol is prepended
 build_dependencies = ["make", "go"]  # Optional: List of tools checked by 'make check-deps'
 capabilities = ["suggest", "icon"]  # Optional: Extra features
 icon = "calc.png"  # Optional: Icon path
@@ -143,9 +143,23 @@ Tarragon supports both global (unprefixed) and explicit prefix-targeted dispatch
   - `provides_general_suggestions` is the contract field for general-suggestion eligibility. Current dispatch requires it to be true for unprefixed queries. For compatibility, discovered plugin manifests that omit the field default to true, but plugin authors should set it explicitly.
 - **Prefix-targeted query**: when input starts with a plugin prefix, Tarragon dispatches only to the matched plugin and forwards query text with the prefix removed.
   - Prefix-targeted dispatch does not depend on `provides_general_suggestions`.
-  - If prefixes overlap, the longest matching prefix wins.
+  - If prefixes overlap, the longest matching prefix wins. Equal-length matches are a configuration error; dispatch falls back to the lowest plugin id and the daemon logs a collision warning.
 
 Use `require_prefix` for strict prefix-only plugins. Use `provides_general_suggestions` as the explicit global-eligibility signal.
+
+### The Prefix Symbol
+
+Manifests declare a bare prefix token, not the leading symbol:
+
+```toml
+prefix = "calc"
+```
+
+The symbol comes from the top-level `prefix_symbol` config option, which defaults to `@`. The example above is typed as `@calc`, and changing `prefix_symbol` to `:` changes it to `:calc` for every plugin at once, without editing any manifest.
+
+A prefix that starts with a non-alphanumeric character is treated as literal and is used exactly as written, so `prefix = "@calc"` and `prefix = "="` keep working regardless of the configured symbol. Prefix overrides in `[plugins.<id>]` follow the same rule.
+
+The effective prefix is what `tarragon plugin list`, `tarragon plugin config` and the status response report. The configured symbol is passed to plugins as `TARRAGON_PREFIX_SYMBOL` for plugins that expose several prefixes of their own.
 
 ## Lifecycle-Aware Status Expectations
 

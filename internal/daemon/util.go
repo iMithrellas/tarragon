@@ -14,6 +14,17 @@ import (
 	"github.com/mithrel-dots/tarragon/internal/wire"
 )
 
+// onCallEnv gives ephemeral plugins the same identity and prefix context that
+// persistent plugins receive when the daemon starts them.
+func onCallEnv(p *plugins.Plugin) []string {
+	return append(os.Environ(),
+		fmt.Sprintf("TARRAGON_PLUGIN_NAME=%s", p.Config.ID),
+		fmt.Sprintf("TARRAGON_PLUGIN_ID=%s", p.Config.ID),
+		fmt.Sprintf("TARRAGON_PLUGIN_DISPLAY_NAME=%s", p.Config.Name),
+		fmt.Sprintf("TARRAGON_PREFIX_SYMBOL=%s", plugins.PrefixSymbol()),
+	)
+}
+
 // invokeOnCallQuery runs an on-call plugin query command and returns its JSON output.
 func invokeOnCallQuery(ctx context.Context, p *plugins.Plugin, query string) (json.RawMessage, error) {
 	entry, err := resolveOnCallEntrypoint(p)
@@ -21,6 +32,7 @@ func invokeOnCallQuery(ctx context.Context, p *plugins.Plugin, query string) (js
 		return nil, err
 	}
 	cmd := exec.CommandContext(ctx, entry, "tarragon", "query", query)
+	cmd.Env = onCallEnv(p)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -53,6 +65,7 @@ func invokeOnCallSelect(ctx context.Context, p *plugins.Plugin, resultID, action
 	}
 
 	cmd := exec.CommandContext(ctx, entry, args...)
+	cmd.Env = onCallEnv(p)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

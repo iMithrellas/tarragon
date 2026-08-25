@@ -43,7 +43,7 @@ Plugins can be invoked directly or contextually, and can expose commands, values
     - `on_call`: Executed per request (ephemeral process lifecycle).
 - **Fan-Out/Gather for Suggestions**: Input is broadcast to eligible plugins concurrently. Results are gathered asynchronously and displayed.
 - **Dispatch Controls**: `require_prefix` gates prefix-only plugins, while `provides_general_suggestions` is the general-suggestion eligibility contract for global/unprefixed fan-out.
-- **Optional Prefixes**: Prefixes (e.g., `@search`) can still force explicit dispatch to a specific plugin.
+- **Optional Prefixes**: Prefixes (e.g., `@search`) can still force explicit dispatch to a specific plugin. Plugins declare a bare token and the leading symbol comes from the `prefix_symbol` config option, so it can be changed globally.
 - **Graceful Shutdown**: Plugins are stopped with `SIGTERM` and only killed if they overrun `plugin_stop_timeout` (default `5s`), so they can flush state and close sockets.
 - **Live Restart**: `tarragon plugin restart [name]` re-reads manifests and bounces plugin processes without restarting the daemon.
 

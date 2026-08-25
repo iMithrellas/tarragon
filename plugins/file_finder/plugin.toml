@@ -6,7 +6,7 @@ entrypoint = "file_finder"
 lifecycle_mode = "daemon"
 
 provides_general_suggestions = true
-prefix = "@f"
+prefix = "f"
 require_prefix = false
 build_dependencies = ["go"]
 capabilities = ["suggest"]

@@ -58,6 +58,46 @@ type PluginConfig struct {
 	BuildDeps       []string `toml:"build_dependencies"`
 	Capabilities    []string `toml:"capabilities"`
 	Icon            string   `toml:"icon"`
+
+	// ResolvedPrefix is the prefix a user actually types. It is derived from
+	// Prefix and the global prefix symbol, and is never read from the manifest.
+	ResolvedPrefix string `toml:"-"`
+}
+
+// DefaultPrefixSymbol is used when the config does not set prefix_symbol.
+const DefaultPrefixSymbol = "@"
+
+// ResolvePrefix combines the configured prefix symbol with a manifest prefix.
+//
+// A bare token such as "calc" becomes symbol + token, so the symbol stays
+// configurable in one place. A token that already begins with a non
+// alphanumeric character (for example "@calc" or "=") is treated as literal,
+// which keeps manifests written before the symbol existed working unchanged.
+func ResolvePrefix(prefix, symbol string) string {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return ""
+	}
+	first := []rune(prefix)[0]
+	isAlphanumeric := (first >= 'a' && first <= 'z') ||
+		(first >= 'A' && first <= 'Z') ||
+		(first >= '0' && first <= '9')
+	if !isAlphanumeric {
+		return prefix
+	}
+	if symbol == "" {
+		return prefix
+	}
+	return symbol + prefix
+}
+
+// PrefixSymbol returns the configured global prefix symbol.
+func PrefixSymbol() string {
+	symbol := strings.TrimSpace(viper.GetString("prefix_symbol"))
+	if symbol == "" {
+		return DefaultPrefixSymbol
+	}
+	return symbol
 }
 
 // Plugin represents a plugin instance loaded from disk.
@@ -235,6 +275,7 @@ func (m *Manager) Discover() error {
 
 		m.Plugins[cfg.ID] = &Plugin{Config: cfg, BaseConfig: cfg, Dir: dir}
 	}
+	m.ResolvePrefixes()
 	return nil
 }
 
@@ -267,6 +308,7 @@ func (m *Manager) DiscoverNew() error {
 		m.Plugins[cfg.ID] = &Plugin{Config: cfg, BaseConfig: cfg, Dir: dir}
 	}
 
+	m.ResolvePrefixes()
 	return nil
 }
 
@@ -300,6 +342,7 @@ func (m *Manager) RefreshConfigs() error {
 		m.Plugins[cfg.ID] = &Plugin{Config: cfg, BaseConfig: cfg, Dir: dir}
 	}
 
+	m.ResolvePrefixes()
 	return nil
 }
 
@@ -364,7 +407,46 @@ func (m *Manager) ApplyOverrides() error {
 		}
 	}
 
+	m.ResolvePrefixes()
+	for _, collision := range m.PrefixCollisions() {
+		log.Printf("config: %s", collision)
+	}
+
 	return nil
+}
+
+// ResolvePrefixes recomputes every plugin's effective prefix from its manifest
+// prefix and the configured prefix symbol.
+func (m *Manager) ResolvePrefixes() {
+	symbol := PrefixSymbol()
+	for _, p := range m.Plugins {
+		p.Config.ResolvedPrefix = ResolvePrefix(p.Config.Prefix, symbol)
+	}
+}
+
+// PrefixCollisions reports effective prefixes claimed by more than one enabled
+// plugin. Dispatch still resolves deterministically by id, but only one of the
+// plugins can ever be reached by that prefix.
+func (m *Manager) PrefixCollisions() []string {
+	owners := make(map[string][]string)
+	for id, p := range m.Plugins {
+		if p.Config.Enabled && p.Config.ResolvedPrefix != "" {
+			owners[p.Config.ResolvedPrefix] = append(owners[p.Config.ResolvedPrefix], id)
+		}
+	}
+
+	collisions := make([]string, 0, len(owners))
+	for prefix, ids := range owners {
+		if len(ids) < 2 {
+			continue
+		}
+		sort.Strings(ids)
+		collisions = append(collisions, fmt.Sprintf(
+			"prefix %q is claimed by %s; only %s is reachable",
+			prefix, strings.Join(ids, ", "), ids[0]))
+	}
+	sort.Strings(collisions)
+	return collisions
 }
 
 // ValidateOverrideKeys reports [plugins.*] config entries that will not take
@@ -541,6 +623,7 @@ func (p *Plugin) start(ctx context.Context, ipcEndpoint string, stopTimeout time
 		fmt.Sprintf("TARRAGON_PLUGIN_NAME=%s", p.Config.ID),
 		fmt.Sprintf("TARRAGON_PLUGIN_ID=%s", p.Config.ID),
 		fmt.Sprintf("TARRAGON_PLUGIN_DISPLAY_NAME=%s", p.Config.Name),
+		fmt.Sprintf("TARRAGON_PREFIX_SYMBOL=%s", PrefixSymbol()),
 	)
 	if err := cmd.Start(); err != nil {
 		return err

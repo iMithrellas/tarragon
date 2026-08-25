@@ -6,7 +6,7 @@ entrypoint = "template_go"
 lifecycle_mode = "daemon"
 
 provides_general_suggestions = true
-prefix = "@tgo"
+prefix = "tgo"
 build_dependencies = ["go"]
 capabilities = ["suggest"]
 icon = ""

@@ -209,7 +209,7 @@ func handleUIClient(ctx context.Context, conn net.Conn, mgr *plugins.Manager, re
 					Enabled:         p.Config.Enabled,
 					Connected:       pluginsReg.isConnected(p.Config.ID),
 					Lifecycle:       string(p.Config.Lifecycle),
-					Prefix:          p.Config.Prefix,
+					Prefix:          p.Config.ResolvedPrefix,
 					RequirePrefix:   p.Config.RequirePrefix,
 					ProvidesGeneral: p.Config.ProvidesGeneral,
 					Capabilities:    p.Config.Capabilities,
@@ -510,11 +510,16 @@ func resolvePrefixTarget(input string, mgr *plugins.Manager) (string, string, bo
 		if !p.Config.Enabled {
 			continue
 		}
-		prefix := strings.TrimSpace(p.Config.Prefix)
+		prefix := strings.TrimSpace(p.Config.ResolvedPrefix)
 		if prefix == "" {
 			continue
 		}
-		if strings.HasPrefix(text, prefix) && len(prefix) > len(targetPrefix) {
+		if !strings.HasPrefix(text, prefix) {
+			continue
+		}
+		// Longest prefix wins. Equal-length prefixes are a config collision,
+		// so fall back to id order rather than Go's random map iteration.
+		if len(prefix) > len(targetPrefix) || (len(prefix) == len(targetPrefix) && name < targetName) {
 			targetName = name
 			targetPrefix = prefix
 		}

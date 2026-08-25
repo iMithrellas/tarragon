@@ -6,7 +6,7 @@ entrypoint = "template_cpp"
 lifecycle_mode = "daemon"
 
 provides_general_suggestions = true
-prefix = "@tcpp"
+prefix = "tcpp"
 build_dependencies = ["c++"]
 capabilities = ["suggest"]
 icon = ""

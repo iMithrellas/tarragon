@@ -6,7 +6,9 @@ Tarragon. Shells out to the `mithshell` CLI binary, which must be on `PATH`;
 this plugin does not reimplement mithshell's own IPC protocol.
 
 Prefix `@ms` is required (`require_prefix = true`), since these are control
-actions, not general-purpose search results.
+actions, not general-purpose search results. The manifest declares the bare
+token `ms`; the leading symbol comes from the `prefix_symbol` config option and
+defaults to `@`.
 
 ## Commands
 

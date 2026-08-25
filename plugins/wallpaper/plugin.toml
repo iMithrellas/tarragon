@@ -6,7 +6,7 @@ entrypoint = "wallpaper"
 lifecycle_mode = "daemon"
 
 provides_general_suggestions = false
-prefix = "@wp"
+prefix = "wp"
 require_prefix = true
 build_dependencies = ["go"]
 capabilities = ["suggest", "preview"]

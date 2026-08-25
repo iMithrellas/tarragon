@@ -70,6 +70,11 @@ func GetConfigOptions() []ConfigOption {
 			Value:   "5s",
 			Comment: "How long plugins may take to exit after SIGTERM before being killed",
 		},
+		{
+			Key:     "prefix_symbol",
+			Value:   "@",
+			Comment: "Symbol prepended to every plugin prefix token (e.g. \"calc\" becomes \"@calc\")",
+		},
 	}
 }
 

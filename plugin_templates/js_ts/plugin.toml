@@ -6,7 +6,7 @@ entrypoint = "template_plugin.js"
 lifecycle_mode = "daemon"
 
 provides_general_suggestions = true
-prefix = "@tjs"
+prefix = "tjs"
 build_dependencies = ["node"]
 capabilities = ["suggest"]
 icon = ""
