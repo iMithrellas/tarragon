@@ -2,10 +2,10 @@
 """
 Mithshell control plugin for Tarragon.
 
-Shells out to the `mithshell` CLI for a fixed set of safe control
-subcommands (dashboard, lock screen, theme). Does not reimplement
-mithshell's own IPC protocol, and never invokes subcommands that start
-a daemon, query the search frontend, or are dev-only.
+Shells out to the `mithshell` CLI for a fixed set of safe control subcommands
+(dashboard, weather, notifications, lock screen, theme). Does not reimplement
+mithshell's own IPC protocol, and never invokes subcommands that start a
+daemon, query the search frontend, or are dev-only.
 """
 
 import argparse
@@ -25,11 +25,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Fixed command table. Deliberately excludes `mithshell search` (self
-# referential from within TarraGon), `mithshell daemon` (starts the GTK
-# process itself), `mithshell osd ...` (display-only, does not change
-# system state), `mithshell completions`, and `mithshell latency`
-# (dev-only).
+# Fixed command table. Deliberately excludes commands that are unsafe,
+# self-referential, diagnostic-only, or redundant when leaving Tarragon.
 COMMANDS = [
     {
         "id": "toggle",
@@ -44,10 +41,10 @@ COMMANDS = [
         "args": ["open"],
     },
     {
-        "id": "close",
-        "label": "Close Dashboard",
-        "description": "Collapse the mithshell dashboard",
-        "args": ["close"],
+        "id": "weather",
+        "label": "Open Weather",
+        "description": "Open the weather forecast on the focused monitor",
+        "args": ["weather"],
     },
     {
         "id": "lock",
@@ -56,22 +53,22 @@ COMMANDS = [
         "args": ["lock"],
     },
     {
-        "id": "unlock",
-        "label": "Force Unlock",
-        "description": "Force-unlock the session without authenticating",
-        "args": ["unlock"],
+        "id": "inhibit",
+        "label": "Toggle Do Not Disturb",
+        "description": "Silence or restore notifications",
+        "args": ["inhibit"],
+    },
+    {
+        "id": "inhibit-1h",
+        "label": "Do Not Disturb for 1 Hour",
+        "description": "Silence notifications for one hour",
+        "args": ["inhibit", "1h"],
     },
     {
         "id": "reload",
         "label": "Reload Config",
         "description": "Reload the mithshell TOML configuration",
         "args": ["reload"],
-    },
-    {
-        "id": "status",
-        "label": "Daemon Status",
-        "description": "Print the running mithshell daemon status",
-        "args": ["status"],
     },
     {
         "id": "theme-dark",
@@ -96,23 +93,35 @@ COMMANDS = [
 COMMANDS_BY_ID = {cmd["id"]: cmd for cmd in COMMANDS}
 
 
+def _result_for(cmd: dict) -> dict:
+    return {
+        "id": cmd["id"],
+        "label": cmd["label"],
+        "description": cmd["description"],
+        "category": "mithshell",
+        "actions": [
+            {
+                "name": "run",
+                "default": True,
+                "description": cmd["label"],
+            }
+        ],
+    }
+
+
 def process(text: str):
     query = text.strip().lower()
     if not query:
-        return []
+        # Prefix entered with no further text yet (e.g. just "@ms"): show
+        # every available command immediately instead of waiting for the
+        # user to start typing a filter.
+        return [_result_for(cmd) for cmd in COMMANDS]
 
     results = []
     for cmd in COMMANDS:
         haystack = f"{cmd['id']} {cmd['label']} {cmd['description']}".lower()
         if query in haystack:
-            results.append(
-                {
-                    "id": cmd["id"],
-                    "label": cmd["label"],
-                    "description": cmd["description"],
-                    "category": "mithshell",
-                }
-            )
+            results.append(_result_for(cmd))
     return results
 
 
@@ -135,7 +144,7 @@ def run_command(result_id: str):
 
     success = proc.returncode == 0
     if success:
-        message = proc.stdout.strip()
+        message = proc.stdout.strip() or f"{cmd['label']} requested"
     else:
         message = proc.stderr.strip() or proc.stdout.strip()
     return success, message
@@ -199,8 +208,12 @@ def run_daemon():
             logger.info("response sent qid=%s", qid)
         elif typ == "select":
             result_id = msg.get("result_id", "")
-            logger.info("select qid=%s result_id=%s", qid, result_id)
-            success, message = run_command(result_id)
+            action = msg.get("action", "")
+            logger.info("select qid=%s result_id=%s action=%s", qid, result_id, action)
+            if action and action != "run":
+                success, message = False, f"unsupported action: {action}"
+            else:
+                success, message = run_command(result_id)
             resp = {
                 "type": "select_response",
                 "success": success,
@@ -217,7 +230,7 @@ def main(argv=None):
     parser.add_argument("--once", metavar="TEXT", help="Process once and print JSON")
     args = parser.parse_args(argv)
 
-    if args.once:
+    if args.once is not None:
         logger.info("request: %s", args.once)
         results = process(args.once)
         print(json.dumps({"results": results}))
