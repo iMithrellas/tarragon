@@ -1,3 +1,4 @@
+id = "file_finder"
 name = "file_finder"
 description = "File search across user directories with SQLite index"
 enabled = true

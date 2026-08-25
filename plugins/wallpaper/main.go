@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -555,18 +556,12 @@ func runCLIContract(args []string) int {
 	}
 }
 
-const manifestTOML = `name = "wallpaper"
- description = "Browse a wallpaper library and set themes through matugen"
-enabled = true
-entrypoint = "wallpaper"
-lifecycle_mode = "daemon"
-provides_general_suggestions = false
-prefix = "@wp"
-require_prefix = true
-build_dependencies = ["go"]
-capabilities = ["suggest", "preview"]
-icon = "preferences-desktop-wallpaper"
-`
+// manifestTOML is the manifest served by `wallpaper tarragon manifest`. It is
+// embedded from plugin.toml so the system-enable path can never drift from the
+// manifest shipped with the plugin.
+//
+//go:embed plugin.toml
+var manifestTOML string
 
 // ─── Diagnostics ─────────────────────────────────────────────────────────
 

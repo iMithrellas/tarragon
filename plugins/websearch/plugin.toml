@@ -1,3 +1,4 @@
+id = "websearch"
 name = "websearch"
 description = "Quick web search via prefix shortcuts"
 enabled = true

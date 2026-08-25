@@ -1,3 +1,4 @@
+id = "template_python"
 name = "template_python"
 description = "Template Python plugin that returns three transposed variants of the input."
 enabled = true

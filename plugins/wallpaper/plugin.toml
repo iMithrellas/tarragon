@@ -1,3 +1,4 @@
+id = "wallpaper"
 name = "wallpaper"
 description = "Browse a wallpaper library and set themes through matugen"
 enabled = true

@@ -1,3 +1,4 @@
+id = "template_cpp"
 name = "template_cpp"
 description = "Template C++ plugin that returns three transformed variants of the input."
 enabled = true

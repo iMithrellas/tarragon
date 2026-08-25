@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -40,6 +41,10 @@ const (
 
 // PluginConfig defines the structure of the plugin configuration file.
 type PluginConfig struct {
+	// ID is the stable identifier used for config overrides, dispatch
+	// routing and IPC. It defaults to the plugin's install directory name.
+	ID string `toml:"id"`
+	// Name is a human-readable display name and carries no routing meaning.
 	Name        string        `toml:"name"`
 	Description string        `toml:"description"`
 	Source      string        `toml:"source"`
@@ -144,6 +149,72 @@ func (m *Manager) StopTimeout() time.Duration {
 	return m.stopTimeout
 }
 
+// NormalizePluginID converts raw into a stable identifier that is safe to use
+// as a bare TOML key, a Viper path segment and an IPC routing name.
+//
+// Letters are lowercased, and any run of unsupported characters collapses into
+// a single underscore. An empty result means raw carried no usable characters.
+func NormalizePluginID(raw string) string {
+	var sb strings.Builder
+	pendingSep := false
+	for _, r := range strings.TrimSpace(raw) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			if pendingSep && sb.Len() > 0 {
+				sb.WriteByte('_')
+			}
+			pendingSep = false
+			sb.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			if pendingSep && sb.Len() > 0 {
+				sb.WriteByte('_')
+			}
+			pendingSep = false
+			sb.WriteRune(r + ('a' - 'A'))
+		case r == '_', r == '-':
+			pendingSep = sb.Len() > 0
+		default:
+			pendingSep = sb.Len() > 0
+		}
+	}
+	return sb.String()
+}
+
+// loadPluginConfig reads and normalizes a single plugin manifest.
+//
+// dirName is the install directory name, which is the default identity for
+// plugins that do not declare an explicit id.
+func loadPluginConfig(pluginDir, dirName string) (PluginConfig, error) {
+	data, err := os.ReadFile(filepath.Join(pluginDir, "plugin.toml"))
+	if err != nil {
+		return PluginConfig{}, err
+	}
+
+	cfg := PluginConfig{ProvidesGeneral: true}
+	if err := toml.Unmarshal(data, &cfg); err != nil {
+		return PluginConfig{}, fmt.Errorf("invalid config: %w", err)
+	}
+
+	declared := strings.TrimSpace(cfg.ID)
+	cfg.ID = NormalizePluginID(declared)
+	if declared != "" && cfg.ID != declared {
+		log.Printf("Plugin %s: id %q is not a valid identifier, using %q", dirName, declared, cfg.ID)
+	}
+	if cfg.ID == "" {
+		cfg.ID = NormalizePluginID(dirName)
+	}
+	if cfg.ID == "" {
+		return PluginConfig{}, fmt.Errorf("cannot derive a plugin id from directory %q", dirName)
+	}
+
+	cfg.Name = strings.TrimSpace(cfg.Name)
+	if cfg.Name == "" {
+		cfg.Name = cfg.ID
+	}
+
+	return cfg, nil
+}
+
 // Discover scans the plugin directory for plugins and loads their configs.
 func (m *Manager) Discover() error {
 	entries, err := os.ReadDir(m.pluginDir)
@@ -155,24 +226,14 @@ func (m *Manager) Discover() error {
 		if !ent.IsDir() {
 			continue
 		}
-		cfgPath := filepath.Join(m.pluginDir, ent.Name(), "plugin.toml")
-		data, err := os.ReadFile(cfgPath)
+		dir := filepath.Join(m.pluginDir, ent.Name())
+		cfg, err := loadPluginConfig(dir, ent.Name())
 		if err != nil {
 			log.Printf("Skipping plugin %s: %v", ent.Name(), err)
 			continue
 		}
 
-		cfg := PluginConfig{ProvidesGeneral: true}
-		if err := toml.Unmarshal(data, &cfg); err != nil {
-			log.Printf("Invalid config for %s: %v", ent.Name(), err)
-			continue
-		}
-		if cfg.Name == "" {
-			cfg.Name = ent.Name()
-		}
-
-		plugin := &Plugin{Config: cfg, BaseConfig: cfg, Dir: filepath.Join(m.pluginDir, ent.Name())}
-		m.Plugins[cfg.Name] = plugin
+		m.Plugins[cfg.ID] = &Plugin{Config: cfg, BaseConfig: cfg, Dir: dir}
 	}
 	return nil
 }
@@ -192,28 +253,18 @@ func (m *Manager) DiscoverNew() error {
 		if !ent.IsDir() {
 			continue
 		}
-		cfgPath := filepath.Join(m.pluginDir, ent.Name(), "plugin.toml")
-		data, err := os.ReadFile(cfgPath)
+		dir := filepath.Join(m.pluginDir, ent.Name())
+		cfg, err := loadPluginConfig(dir, ent.Name())
 		if err != nil {
 			log.Printf("Skipping plugin %s: %v", ent.Name(), err)
 			continue
 		}
 
-		cfg := PluginConfig{ProvidesGeneral: true}
-		if err := toml.Unmarshal(data, &cfg); err != nil {
-			log.Printf("Invalid config for %s: %v", ent.Name(), err)
-			continue
-		}
-		if cfg.Name == "" {
-			cfg.Name = ent.Name()
-		}
-
-		if _, exists := m.Plugins[cfg.Name]; exists {
+		if _, exists := m.Plugins[cfg.ID]; exists {
 			continue
 		}
 
-		plugin := &Plugin{Config: cfg, BaseConfig: cfg, Dir: filepath.Join(m.pluginDir, ent.Name())}
-		m.Plugins[cfg.Name] = plugin
+		m.Plugins[cfg.ID] = &Plugin{Config: cfg, BaseConfig: cfg, Dir: dir}
 	}
 
 	return nil
@@ -233,36 +284,52 @@ func (m *Manager) RefreshConfigs() error {
 		if !ent.IsDir() {
 			continue
 		}
-		cfgPath := filepath.Join(m.pluginDir, ent.Name(), "plugin.toml")
-		data, err := os.ReadFile(cfgPath)
+		dir := filepath.Join(m.pluginDir, ent.Name())
+		cfg, err := loadPluginConfig(dir, ent.Name())
 		if err != nil {
 			log.Printf("Skipping plugin %s: %v", ent.Name(), err)
 			continue
 		}
 
-		cfg := PluginConfig{ProvidesGeneral: true}
-		if err := toml.Unmarshal(data, &cfg); err != nil {
-			log.Printf("Invalid config for %s: %v", ent.Name(), err)
-			continue
-		}
-		if cfg.Name == "" {
-			cfg.Name = ent.Name()
-		}
-
-		dir := filepath.Join(m.pluginDir, ent.Name())
-		if p, ok := m.Plugins[cfg.Name]; ok {
+		if p, ok := m.Plugins[cfg.ID]; ok {
 			p.BaseConfig = cfg
 			p.Config = cfg
 			p.Dir = dir
 			continue
 		}
-		m.Plugins[cfg.Name] = &Plugin{Config: cfg, BaseConfig: cfg, Dir: dir}
+		m.Plugins[cfg.ID] = &Plugin{Config: cfg, BaseConfig: cfg, Dir: dir}
 	}
 
 	return nil
 }
 
-// ApplyOverrides merges [plugins.<name>] config overrides from Viper on top of
+// OverrideKeys lists the [plugins.<id>] keys that ApplyOverrides understands.
+var OverrideKeys = []string{"enabled", "prefix", "lifecycle_mode"}
+
+// overrideSections returns the config sections consulted for a plugin, in
+// precedence order. The stable id wins; the display name is accepted as a
+// deprecated fallback so configs written before ids existed keep working.
+func overrideSections(id string, cfg PluginConfig) []string {
+	sections := []string{id}
+	if name := strings.TrimSpace(cfg.Name); name != "" && !strings.EqualFold(name, id) {
+		sections = append(sections, name)
+	}
+	return sections
+}
+
+// lookupOverride finds the first section that sets key, returning its full
+// Viper path.
+func lookupOverride(sections []string, key string) (string, bool) {
+	for _, section := range sections {
+		path := fmt.Sprintf("plugins.%s.%s", section, key)
+		if viper.IsSet(path) {
+			return path, true
+		}
+	}
+	return "", false
+}
+
+// ApplyOverrides merges [plugins.<id>] config overrides from Viper on top of
 // discovered plugin.toml defaults.
 //
 // Supported override keys:
@@ -270,31 +337,103 @@ func (m *Manager) RefreshConfigs() error {
 //   - prefix (string)
 //   - lifecycle_mode (daemon | on_demand_persistent | on_call)
 func (m *Manager) ApplyOverrides() error {
-	for name, p := range m.Plugins {
+	for _, warning := range m.ValidateOverrideKeys() {
+		log.Printf("config: %s", warning)
+	}
+
+	for id, p := range m.Plugins {
 		// Reset to defaults from plugin.toml so removed overrides take effect.
 		p.Config = p.BaseConfig
 
-		baseKey := fmt.Sprintf("plugins.%s", name)
+		sections := overrideSections(id, p.BaseConfig)
 
-		if viper.IsSet(baseKey + ".enabled") {
-			p.Config.Enabled = viper.GetBool(baseKey + ".enabled")
+		if path, ok := lookupOverride(sections, "enabled"); ok {
+			p.Config.Enabled = viper.GetBool(path)
 		}
 
-		if viper.IsSet(baseKey + ".prefix") {
-			p.Config.Prefix = viper.GetString(baseKey + ".prefix")
+		if path, ok := lookupOverride(sections, "prefix"); ok {
+			p.Config.Prefix = viper.GetString(path)
 		}
 
-		if viper.IsSet(baseKey + ".lifecycle_mode") {
-			raw := viper.GetString(baseKey + ".lifecycle_mode")
-			mode, err := ParseLifecycleMode(raw)
+		if path, ok := lookupOverride(sections, "lifecycle_mode"); ok {
+			mode, err := ParseLifecycleMode(viper.GetString(path))
 			if err != nil {
-				return fmt.Errorf("invalid lifecycle override for plugin %q: %w", name, err)
+				return fmt.Errorf("invalid lifecycle override for plugin %q: %w", id, err)
 			}
 			p.Config.Lifecycle = mode
 		}
 	}
 
 	return nil
+}
+
+// ValidateOverrideKeys reports [plugins.*] config entries that will not take
+// effect, such as sections naming an unknown plugin, sections still keyed by a
+// display name, and unrecognized keys within a valid section.
+//
+// Viper lowercases config keys, so all comparisons here are case-insensitive.
+func (m *Manager) ValidateOverrideKeys() []string {
+	raw := viper.GetStringMap("plugins")
+	if len(raw) == 0 {
+		return nil
+	}
+
+	byID := make(map[string]string, len(m.Plugins))
+	byName := make(map[string]string, len(m.Plugins))
+	for id, p := range m.Plugins {
+		byID[strings.ToLower(id)] = id
+		if name := strings.TrimSpace(p.BaseConfig.Name); name != "" && !strings.EqualFold(name, id) {
+			byName[strings.ToLower(name)] = id
+		}
+	}
+
+	known := make(map[string]bool, len(OverrideKeys))
+	for _, key := range OverrideKeys {
+		known[key] = true
+	}
+
+	sections := make([]string, 0, len(raw))
+	for section := range raw {
+		sections = append(sections, section)
+	}
+	sort.Strings(sections)
+
+	var warnings []string
+	for _, section := range sections {
+		id, ok := byID[section]
+		if !ok {
+			if target, deprecated := byName[section]; deprecated {
+				warnings = append(warnings, fmt.Sprintf(
+					"[plugins.%q] is keyed by display name; rename the section to [plugins.%s]", section, target))
+				id = target
+			} else {
+				warnings = append(warnings, fmt.Sprintf(
+					"[plugins.%s] does not match any installed plugin id and is ignored", section))
+				continue
+			}
+		}
+
+		values, isTable := raw[section].(map[string]any)
+		if !isTable {
+			warnings = append(warnings, fmt.Sprintf("[plugins.%s] is not a table and is ignored", section))
+			continue
+		}
+
+		keys := make([]string, 0, len(values))
+		for key := range values {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			if !known[key] {
+				warnings = append(warnings, fmt.Sprintf(
+					"[plugins.%s] has unknown key %q and is ignored (supported: %s)",
+					id, key, strings.Join(OverrideKeys, ", ")))
+			}
+		}
+	}
+
+	return warnings
 }
 
 // ParseLifecycleMode validates and converts lifecycle mode string.
@@ -394,10 +533,14 @@ func (p *Plugin) start(ctx context.Context, ipcEndpoint string, stopTimeout time
 		return cmd.Process.Signal(syscall.SIGTERM)
 	}
 	cmd.WaitDelay = stopTimeout
-	// Provide IPC endpoint and plugin name to the child.
+	// Provide IPC endpoint and plugin identity to the child. TARRAGON_PLUGIN_NAME
+	// carries the routing id, since that is the value the daemon matches against
+	// the plugin's hello message.
 	cmd.Env = append(os.Environ(),
 		fmt.Sprintf("TARRAGON_PLUGINS_ENDPOINT=%s", ipcEndpoint),
-		fmt.Sprintf("TARRAGON_PLUGIN_NAME=%s", p.Config.Name),
+		fmt.Sprintf("TARRAGON_PLUGIN_NAME=%s", p.Config.ID),
+		fmt.Sprintf("TARRAGON_PLUGIN_ID=%s", p.Config.ID),
+		fmt.Sprintf("TARRAGON_PLUGIN_DISPLAY_NAME=%s", p.Config.Name),
 	)
 	if err := cmd.Start(); err != nil {
 		return err
@@ -407,7 +550,7 @@ func (p *Plugin) start(ctx context.Context, ipcEndpoint string, stopTimeout time
 	p.done = done
 	p.running.Store(true)
 
-	name := p.Config.Name
+	name := p.Config.ID
 	go func() {
 		err := cmd.Wait()
 		if err != nil {
@@ -436,7 +579,7 @@ func (p *Plugin) stopHandle() (stopHandle, bool) {
 	if !p.running.Load() || p.cmd == nil || p.cmd.Process == nil {
 		return stopHandle{}, false
 	}
-	return stopHandle{plugin: p, name: p.Config.Name, proc: p.cmd.Process, done: p.done}, true
+	return stopHandle{plugin: p, name: p.Config.ID, proc: p.cmd.Process, done: p.done}, true
 }
 
 // stop terminates the process, preferring a clean exit.

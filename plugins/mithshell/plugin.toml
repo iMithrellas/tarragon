@@ -1,3 +1,4 @@
+id = "mithshell"
 name = "Mithshell Control"
 description = "Control the mithshell Hyprland island: dashboard, lock screen, and theme"
 enabled = true

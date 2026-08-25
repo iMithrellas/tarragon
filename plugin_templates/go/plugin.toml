@@ -1,3 +1,4 @@
+id = "template_go"
 name = "template_go"
 description = "Template Go plugin that returns three transformed variants of the input."
 enabled = true

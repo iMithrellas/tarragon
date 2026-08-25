@@ -66,6 +66,7 @@ var installPluginCmd = &cobra.Command{
 		}
 
 		var cfg struct {
+			ID   string `toml:"id"`
 			Name string `toml:"name"`
 		}
 		if err := toml.Unmarshal(data, &cfg); err != nil {
@@ -73,6 +74,15 @@ var installPluginCmd = &cobra.Command{
 		}
 		if cfg.Name == "" {
 			return errors.New("plugin.toml is missing required field: name")
+		}
+		// Install under the stable id so the directory, the [plugins.<id>]
+		// config section and the uninstall argument all agree.
+		pluginID := plugins.NormalizePluginID(cfg.ID)
+		if pluginID == "" {
+			pluginID = plugins.NormalizePluginID(cfg.Name)
+		}
+		if pluginID == "" {
+			return errors.New("plugin.toml has no usable id or name")
 		}
 
 		makefilePath := filepath.Join(repoDir, "Makefile")
@@ -99,7 +109,7 @@ var installPluginCmd = &cobra.Command{
 		if pluginRoot == "" {
 			return errors.New("could not determine plugin installation directory")
 		}
-		installRoot := filepath.Join(pluginRoot, cfg.Name)
+		installRoot := filepath.Join(pluginRoot, pluginID)
 		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "[5/6] Building and installing plugin to %s ...\n", installRoot); err != nil {
 			return err
 		}
@@ -124,7 +134,7 @@ var installPluginCmd = &cobra.Command{
 		if _, err := fmt.Fprintln(cmd.OutOrStdout(), "[6/6] Cleaning up temporary files..."); err != nil {
 			return err
 		}
-		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Installed plugin %q at %s\n", cfg.Name, installRoot); err != nil {
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Installed plugin %q at %s\n", pluginID, installRoot); err != nil {
 			return err
 		}
 

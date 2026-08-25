@@ -25,6 +25,7 @@ var (
 )
 
 type pluginConfigRow struct {
+	ID          string
 	Name        string
 	Enabled     bool
 	Lifecycle   plugins.LifecycleMode
@@ -193,7 +194,7 @@ func printPluginConfigTable(cmd *cobra.Command, onlyName string) error {
 	if onlyName != "" {
 		filtered = nil
 		for _, row := range rows {
-			if row.Name == onlyName {
+			if row.ID == onlyName {
 				filtered = append(filtered, row)
 				break
 			}
@@ -204,7 +205,7 @@ func printPluginConfigTable(cmd *cobra.Command, onlyName string) error {
 	}
 
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(w, "NAME\tENABLED\tLIFECYCLE\tPREFIX\tDESCRIPTION"); err != nil {
+	if _, err := fmt.Fprintln(w, "ID\tNAME\tENABLED\tLIFECYCLE\tPREFIX\tDESCRIPTION"); err != nil {
 		return err
 	}
 	for _, row := range filtered {
@@ -221,7 +222,7 @@ func printPluginConfigTable(cmd *cobra.Command, onlyName string) error {
 			prefix += "*"
 		}
 
-		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", row.Name, enabled, lifecycle, prefix, row.Description); err != nil {
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", row.ID, row.Name, enabled, lifecycle, prefix, row.Description); err != nil {
 			return err
 		}
 	}
@@ -248,21 +249,22 @@ func collectPluginConfigRows() ([]pluginConfigRow, error) {
 		return nil, err
 	}
 
-	names := make([]string, 0, len(baseMgr.Plugins))
-	for name := range baseMgr.Plugins {
-		names = append(names, name)
+	ids := make([]string, 0, len(baseMgr.Plugins))
+	for id := range baseMgr.Plugins {
+		ids = append(ids, id)
 	}
-	sort.Strings(names)
+	sort.Strings(ids)
 
-	rows := make([]pluginConfigRow, 0, len(names))
-	for _, name := range names {
-		base := baseMgr.Plugins[name]
-		eff := effectiveMgr.Plugins[name]
+	rows := make([]pluginConfigRow, 0, len(ids))
+	for _, id := range ids {
+		base := baseMgr.Plugins[id]
+		eff := effectiveMgr.Plugins[id]
 		if base == nil || eff == nil {
 			continue
 		}
 		rows = append(rows, pluginConfigRow{
-			Name:        name,
+			ID:          id,
+			Name:        eff.Config.Name,
 			Enabled:     eff.Config.Enabled,
 			Lifecycle:   eff.Config.Lifecycle,
 			Prefix:      eff.Config.Prefix,

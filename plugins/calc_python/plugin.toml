@@ -1,3 +1,4 @@
+id = "calculator"
 name = "calculator"
 description = "Math calculator and equation solver"
 enabled = true

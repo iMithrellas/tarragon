@@ -202,11 +202,12 @@ func handleUIClient(ctx context.Context, conn net.Conn, mgr *plugins.Manager, re
 					total++
 				}
 				pluginInfos = append(pluginInfos, wire.PluginInfo{
+					ID:              p.Config.ID,
 					Name:            p.Config.Name,
 					Description:     p.Config.Description,
 					Source:          p.Config.Source,
 					Enabled:         p.Config.Enabled,
-					Connected:       pluginsReg.isConnected(p.Config.Name),
+					Connected:       pluginsReg.isConnected(p.Config.ID),
 					Lifecycle:       string(p.Config.Lifecycle),
 					Prefix:          p.Config.Prefix,
 					RequirePrefix:   p.Config.RequirePrefix,
@@ -217,7 +218,7 @@ func handleUIClient(ctx context.Context, conn net.Conn, mgr *plugins.Manager, re
 			}
 			mgr.RUnlock()
 			sort.Slice(pluginInfos, func(i, j int) bool {
-				return pluginInfos[i].Name < pluginInfos[j].Name
+				return pluginInfos[i].ID < pluginInfos[j].ID
 			})
 			_ = wire.WriteMsg(conn, &wire.StatusResponse{
 				Type:      "status",

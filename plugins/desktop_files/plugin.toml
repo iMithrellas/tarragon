@@ -1,3 +1,4 @@
+id = "desktop_files"
 name = "desktop_files"
 description = "Application launcher from .desktop files"
 enabled = true

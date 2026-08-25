@@ -142,7 +142,7 @@ func run(opts options, out io.Writer) error {
 			}
 			for _, plugin := range prefixOnly {
 				query := strings.TrimSpace(plugin.Prefix + " " + input)
-				outcome, err := c.runQuery(query, []string{plugin.Name}, opts.timeout)
+				outcome, err := c.runQuery(query, []string{plugin.ID}, opts.timeout)
 				if err != nil {
 					return err
 				}
@@ -242,19 +242,19 @@ func (c *client) runQuery(text string, targets []string, timeout time.Duration) 
 func classifyPlugins(infos []wire.PluginInfo) (map[string]*benchStats, []string, []wire.PluginInfo) {
 	stats := make(map[string]*benchStats)
 	generalSet := make(map[string]struct{})
-	prefixByName := make(map[string]wire.PluginInfo)
+	prefixByID := make(map[string]wire.PluginInfo)
 
 	for _, info := range infos {
 		if !info.Enabled {
 			continue
 		}
-		stats[info.Name] = &benchStats{name: info.Name}
+		stats[info.ID] = &benchStats{name: info.ID}
 		if !info.RequirePrefix && info.ProvidesGeneral {
-			generalSet[info.Name] = struct{}{}
+			generalSet[info.ID] = struct{}{}
 			continue
 		}
 		if strings.TrimSpace(info.Prefix) != "" {
-			prefixByName[info.Name] = info
+			prefixByID[info.ID] = info
 		}
 	}
 
@@ -264,11 +264,11 @@ func classifyPlugins(infos []wire.PluginInfo) (map[string]*benchStats, []string,
 	}
 	sort.Strings(general)
 
-	prefixOnly := make([]wire.PluginInfo, 0, len(prefixByName))
-	for _, info := range prefixByName {
+	prefixOnly := make([]wire.PluginInfo, 0, len(prefixByID))
+	for _, info := range prefixByID {
 		prefixOnly = append(prefixOnly, info)
 	}
-	sort.Slice(prefixOnly, func(i, j int) bool { return prefixOnly[i].Name < prefixOnly[j].Name })
+	sort.Slice(prefixOnly, func(i, j int) bool { return prefixOnly[i].ID < prefixOnly[j].ID })
 
 	return stats, general, prefixOnly
 }

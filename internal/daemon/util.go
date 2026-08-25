@@ -25,7 +25,7 @@ func invokeOnCallQuery(ctx context.Context, p *plugins.Plugin, query string) (js
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("%s: %w; stderr=%s", p.Config.Name, err, stderr.String())
+		return nil, fmt.Errorf("%s: %w; stderr=%s", p.Config.ID, err, stderr.String())
 	}
 	out := bytes.TrimSpace(stdout.Bytes())
 	if len(out) == 0 {
@@ -57,7 +57,7 @@ func invokeOnCallSelect(ctx context.Context, p *plugins.Plugin, resultID, action
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return wire.SelectResponse{}, fmt.Errorf("%s: %w; stderr=%s", p.Config.Name, err, stderr.String())
+		return wire.SelectResponse{}, fmt.Errorf("%s: %w; stderr=%s", p.Config.ID, err, stderr.String())
 	}
 
 	resp := wire.SelectResponse{Type: wire.MsgSelectResponse, Success: true}
@@ -71,7 +71,7 @@ func invokeOnCallSelect(ctx context.Context, p *plugins.Plugin, resultID, action
 		Message string `json:"message"`
 	}
 	if err := json.Unmarshal(out, &parsed); err != nil {
-		return wire.SelectResponse{}, fmt.Errorf("%s: invalid select response JSON: %w", p.Config.Name, err)
+		return wire.SelectResponse{}, fmt.Errorf("%s: invalid select response JSON: %w", p.Config.ID, err)
 	}
 	if parsed.Success != nil {
 		resp.Success = *parsed.Success
@@ -93,7 +93,7 @@ func resolveOnCallEntrypoint(p *plugins.Plugin) (string, error) {
 			return resolved, nil
 		}
 	}
-	return "", fmt.Errorf("%s: entrypoint %q is unavailable", p.Config.Name, entry)
+	return "", fmt.Errorf("%s: entrypoint %q is unavailable", p.Config.ID, entry)
 }
 
 // escapeJSONString escapes a string for embedding into JSON literals.

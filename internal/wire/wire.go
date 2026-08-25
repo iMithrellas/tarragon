@@ -95,7 +95,12 @@ type AckMessage struct {
 }
 
 // PluginInfo describes a plugin's metadata and connection status for UI display.
+//
+// ID is the stable routing identifier and matches the value used in
+// ResultItem.Plugin, UIRequest.Plugin and [plugins.<id>] config sections. Name
+// is for display only.
 type PluginInfo struct {
+	ID              string   `json:"id"`
 	Name            string   `json:"name"`
 	Description     string   `json:"description,omitempty"`
 	Source          string   `json:"source,omitempty"`

@@ -17,6 +17,7 @@ import (
 )
 
 type installedPlugin struct {
+	ID            string `toml:"id"`
 	Name          string `toml:"name"`
 	Description   string `toml:"description"`
 	LifecycleMode string `toml:"lifecycle_mode"`
@@ -61,8 +62,15 @@ var listPluginsCmd = &cobra.Command{
 				continue
 			}
 
+			cfg.ID = plugins.NormalizePluginID(cfg.ID)
+			if cfg.ID == "" {
+				cfg.ID = plugins.NormalizePluginID(entry.Name())
+			}
+			if cfg.ID == "" {
+				continue
+			}
 			if cfg.Name == "" {
-				cfg.Name = entry.Name()
+				cfg.Name = cfg.ID
 			}
 
 			installed = append(installed, cfg)
@@ -75,15 +83,16 @@ var listPluginsCmd = &cobra.Command{
 			return nil
 		}
 
-		sort.Slice(installed, func(i, j int) bool { return installed[i].Name < installed[j].Name })
+		sort.Slice(installed, func(i, j int) bool { return installed[i].ID < installed[j].ID })
 		rows := make([][]string, 0, len(installed))
 		for _, cfg := range installed {
 			loadedValue := "unknown"
 			if daemonAvailable {
-				_, ok := loaded[cfg.Name]
+				_, ok := loaded[cfg.ID]
 				loadedValue = fmt.Sprintf("%t", ok)
 			}
 			rows = append(rows, []string{
+				cfg.ID,
 				cfg.Name,
 				cfg.Description,
 				cfg.LifecycleMode,
@@ -93,6 +102,7 @@ var listPluginsCmd = &cobra.Command{
 		}
 
 		texttable.Render(cmd.OutOrStdout(), []texttable.Column{
+			{Header: "ID"},
 			{Header: "NAME"},
 			{Header: "DESCRIPTION"},
 			{Header: "LIFECYCLE_MODE"},
@@ -124,7 +134,7 @@ func loadedPluginsFromDaemon(timeout time.Duration) (map[string]wire.PluginInfo,
 
 	loaded := make(map[string]wire.PluginInfo, len(status.Plugins))
 	for _, info := range status.Plugins {
-		loaded[info.Name] = info
+		loaded[info.ID] = info
 	}
 	return loaded, true
 }

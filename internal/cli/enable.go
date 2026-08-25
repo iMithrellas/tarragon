@@ -109,9 +109,16 @@ func rewriteManifestForSystem(manifest []byte, binaryPath string, fallbackName s
 		return nil, "", fmt.Errorf("parse plugin manifest: %w", err)
 	}
 
-	pluginName := strings.TrimSpace(cfg.Name)
+	// Resolve the stable id used for the install directory and config section.
+	pluginName := plugins.NormalizePluginID(cfg.ID)
 	if pluginName == "" {
-		pluginName = fallbackName
+		pluginName = plugins.NormalizePluginID(cfg.Name)
+	}
+	if pluginName == "" {
+		pluginName = plugins.NormalizePluginID(fallbackName)
+	}
+	if pluginName == "" {
+		return nil, "", errors.New("plugin manifest has no usable id or name")
 	}
 	if strings.TrimSpace(cfg.Entrypoint) == "" {
 		return nil, "", errors.New("plugin manifest is missing required field: entrypoint")

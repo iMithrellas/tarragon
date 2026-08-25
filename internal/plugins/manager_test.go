@@ -4,6 +4,8 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/spf13/viper"
@@ -221,4 +223,181 @@ func TestRefreshConfigsUpdatesManifestWithoutReplacingRuntimeState(t *testing.T)
 	if got := original.Config.Entrypoint; got != "new.sh" {
 		t.Fatalf("entrypoint = %q, want new.sh", got)
 	}
+}
+
+func writeManifest(t *testing.T, root, dir, body string) string {
+	t.Helper()
+	plugDir := filepath.Join(root, dir)
+	if err := os.MkdirAll(plugDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(plugDir, "plugin.toml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return plugDir
+}
+
+func TestNormalizePluginID(t *testing.T) {
+	cases := map[string]string{
+		"system_control":    "system_control",
+		"System Control":    "system_control",
+		"Mithshell Control": "mithshell_control",
+		"  Spaced  Out  ":   "spaced_out",
+		"weird!!chars":      "weird_chars",
+		"--leading":         "leading",
+		"trailing--":        "trailing",
+		"":                  "",
+		"!!!":               "",
+	}
+	for input, want := range cases {
+		if got := NormalizePluginID(input); got != want {
+			t.Errorf("NormalizePluginID(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestDiscoverKeysByDirectoryWhenIDOmitted(t *testing.T) {
+	root := t.TempDir()
+	writeManifest(t, root, "system_control", "name=\"System Control\"\nentrypoint=\"run.sh\"\nenabled=true\n")
+
+	m := NewManager(root)
+	if err := m.Discover(); err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	p, ok := m.Plugins["system_control"]
+	if !ok {
+		t.Fatalf("expected plugin keyed by directory name, got keys %v", pluginKeys(m))
+	}
+	if p.Config.ID != "system_control" {
+		t.Fatalf("expected id system_control, got %q", p.Config.ID)
+	}
+	if p.Config.Name != "System Control" {
+		t.Fatalf("expected display name to be preserved, got %q", p.Config.Name)
+	}
+}
+
+func TestDiscoverPrefersExplicitIDOverDirectory(t *testing.T) {
+	root := t.TempDir()
+	writeManifest(t, root, "some_dir", "id=\"chosen\"\nname=\"Whatever\"\nentrypoint=\"run.sh\"\n")
+
+	m := NewManager(root)
+	if err := m.Discover(); err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	if _, ok := m.Plugins["chosen"]; !ok {
+		t.Fatalf("expected plugin keyed by explicit id, got keys %v", pluginKeys(m))
+	}
+}
+
+func TestDiscoverNormalizesInvalidExplicitID(t *testing.T) {
+	root := t.TempDir()
+	writeManifest(t, root, "some_dir", "id=\"Not A Bare Key\"\nentrypoint=\"run.sh\"\n")
+
+	m := NewManager(root)
+	if err := m.Discover(); err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	if _, ok := m.Plugins["not_a_bare_key"]; !ok {
+		t.Fatalf("expected normalized id, got keys %v", pluginKeys(m))
+	}
+}
+
+func TestApplyOverridesUsesIDSection(t *testing.T) {
+	viper.Reset()
+	defer viper.Reset()
+
+	root := t.TempDir()
+	writeManifest(t, root, "system_control", "name=\"System Control\"\nentrypoint=\"run.sh\"\nprefix=\"@system\"\n")
+
+	m := NewManager(root)
+	if err := m.Discover(); err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	viper.Set("plugins.system_control.prefix", "@sys")
+	if err := m.ApplyOverrides(); err != nil {
+		t.Fatalf("apply overrides: %v", err)
+	}
+	if got := m.Plugins["system_control"].Config.Prefix; got != "@sys" {
+		t.Fatalf("expected override by id, got %q", got)
+	}
+}
+
+func TestApplyOverridesFallsBackToDisplayNameSection(t *testing.T) {
+	viper.Reset()
+	defer viper.Reset()
+
+	root := t.TempDir()
+	writeManifest(t, root, "system_control", "name=\"System Control\"\nentrypoint=\"run.sh\"\nprefix=\"@system\"\n")
+
+	m := NewManager(root)
+	if err := m.Discover(); err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	viper.Set("plugins.System Control.prefix", "@legacy")
+	if err := m.ApplyOverrides(); err != nil {
+		t.Fatalf("apply overrides: %v", err)
+	}
+	if got := m.Plugins["system_control"].Config.Prefix; got != "@legacy" {
+		t.Fatalf("expected legacy display-name override to apply, got %q", got)
+	}
+}
+
+func TestApplyOverridesPrefersIDOverDisplayName(t *testing.T) {
+	viper.Reset()
+	defer viper.Reset()
+
+	root := t.TempDir()
+	writeManifest(t, root, "system_control", "name=\"System Control\"\nentrypoint=\"run.sh\"\n")
+
+	m := NewManager(root)
+	if err := m.Discover(); err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	viper.Set("plugins.System Control.prefix", "@legacy")
+	viper.Set("plugins.system_control.prefix", "@sys")
+	if err := m.ApplyOverrides(); err != nil {
+		t.Fatalf("apply overrides: %v", err)
+	}
+	if got := m.Plugins["system_control"].Config.Prefix; got != "@sys" {
+		t.Fatalf("expected id section to win, got %q", got)
+	}
+}
+
+func TestValidateOverrideKeysReportsProblems(t *testing.T) {
+	viper.Reset()
+	defer viper.Reset()
+
+	root := t.TempDir()
+	writeManifest(t, root, "system_control", "name=\"System Control\"\nentrypoint=\"run.sh\"\n")
+
+	m := NewManager(root)
+	if err := m.Discover(); err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+
+	viper.Set("plugins.system_control.enabled", true)
+	viper.Set("plugins.system_control.prefx", "typo")
+	viper.Set("plugins.System Control.enabled", true)
+	viper.Set("plugins.ghost.enabled", true)
+
+	warnings := m.ValidateOverrideKeys()
+	joined := strings.Join(warnings, "\n")
+
+	for _, want := range []string{"prefx", "ghost", "display name"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected warning mentioning %q, got:\n%s", want, joined)
+		}
+	}
+	if strings.Contains(joined, "\"enabled\"") {
+		t.Fatalf("did not expect a warning for a supported key, got:\n%s", joined)
+	}
+}
+
+func pluginKeys(m *Manager) []string {
+	keys := make([]string, 0, len(m.Plugins))
+	for k := range m.Plugins {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }

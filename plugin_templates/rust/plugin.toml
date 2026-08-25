@@ -1,3 +1,4 @@
+id = "template_rust"
 name = "template_rust"
 description = "Template Rust plugin that returns three transposed variants of the input."
 enabled = true

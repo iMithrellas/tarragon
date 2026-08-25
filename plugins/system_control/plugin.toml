@@ -1,3 +1,4 @@
+id = "system_control"
 name = "System Control"
 description = "Lock, suspend, hibernate, reboot, or power off the computer"
 enabled = true

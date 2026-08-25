@@ -76,7 +76,8 @@ Status responses currently include source metadata when it is present in the man
 Example `plugin.toml`:
 
 ```toml
-name = "template_python"
+id = "template_python"
+name = "Template Python"
 description = "Template Python plugin"
 enabled = true
 entrypoint = "template_plugin.py"
@@ -89,6 +90,7 @@ capabilities = ["suggest"]
 ```
 
 ```toml
+id = "calculator"
 name = "Calculator"
 description = "Evaluate basic math expressions"
 enabled = true
@@ -100,6 +102,32 @@ build_dependencies = ["make", "go"]  # Optional: List of tools checked by 'make 
 capabilities = ["suggest", "icon"]  # Optional: Extra features
 icon = "calc.png"  # Optional: Icon path
 ```
+
+## Plugin Identity
+
+Every plugin has two distinct names:
+
+- `id` is the stable identifier. It is used for the install directory, the `[plugins.<id>]` config section, `tarragon plugin config <id>`, the `plugin` field on results, and the plugin's IPC routing name.
+- `name` is a human-readable display name with no routing meaning. It may contain spaces and capitals.
+
+`id` must consist of lowercase letters, digits, `_` and `-`. When `id` is omitted it defaults to the plugin's install directory name; invalid characters are normalized (`"System Control"` becomes `system_control`). Declaring `id` explicitly is recommended.
+
+The daemon passes the id to plugins as `TARRAGON_PLUGIN_NAME` and `TARRAGON_PLUGIN_ID`, and the display name as `TARRAGON_PLUGIN_DISPLAY_NAME`. A persistent plugin must send its id in the `hello` message, or the daemon cannot route requests to it.
+
+## Configuration Overrides
+
+Tarragon-level plugin settings are overridden in the main config file, keyed by plugin id:
+
+```toml
+[plugins.system_control]
+enabled = true
+prefix = "@sys"
+lifecycle_mode = "on_call"
+```
+
+Only `enabled`, `prefix` and `lifecycle_mode` are supported. Any other key, or a section that matches no installed plugin id, is ignored and reported as a warning in the daemon log. Sections keyed by display name still apply for backwards compatibility, but are deprecated and warn.
+
+Overrides can also be written with `tarragon plugin config <id> --prefix @sys`, which updates the config file and asks a running daemon to reload. Plugin-specific settings that Tarragon does not understand belong in the plugin's own config file instead.
 
 Lifecycle modes:
 - `daemon`: started by the daemon at startup and kept running.

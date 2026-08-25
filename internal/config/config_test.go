@@ -337,3 +337,75 @@ func TestResetPluginOverrideRemovesSection(t *testing.T) {
 		t.Fatalf("expected other section to remain, got:\n%s", txt)
 	}
 }
+
+func TestWritePluginOverrideQuotesNonBareKeys(t *testing.T) {
+	resetFlags()
+	defer resetFlags()
+
+	configDir := filepath.Join(t.TempDir(), "tarragon")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	cfgPath := filepath.Join(configDir, "tarragon.toml")
+	if err := os.WriteFile(cfgPath, []byte("run_tcp = false\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if err := LoadConfig(configDir); err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	if err := WritePluginOverride("System Control", map[string]any{"prefix": "@sys"}); err != nil {
+		t.Fatalf("WritePluginOverride: %v", err)
+	}
+
+	updated, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("read updated config: %v", err)
+	}
+	if !strings.Contains(string(updated), "[plugins.\"System Control\"]") {
+		t.Fatalf("expected quoted section header, got:\n%s", string(updated))
+	}
+}
+
+func TestResetPluginOverrideRemovesQuotedSection(t *testing.T) {
+	resetFlags()
+	defer resetFlags()
+
+	configDir := filepath.Join(t.TempDir(), "tarragon")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	cfgPath := filepath.Join(configDir, "tarragon.toml")
+	content := strings.Join([]string{
+		"run_tcp = false",
+		"",
+		"[plugins.\"System Control\"]",
+		"prefix = \"@sys\"",
+		"",
+		"[plugins.other]",
+		"enabled = true",
+		"",
+	}, "\n")
+	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if err := LoadConfig(configDir); err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	if err := ResetPluginOverride("System Control"); err != nil {
+		t.Fatalf("ResetPluginOverride: %v", err)
+	}
+
+	updated, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("read updated config: %v", err)
+	}
+	txt := string(updated)
+	if strings.Contains(txt, "System Control") {
+		t.Fatalf("expected quoted section to be removed, got:\n%s", txt)
+	}
+	if !strings.Contains(txt, "[plugins.other]") {
+		t.Fatalf("expected unrelated section to remain, got:\n%s", txt)
+	}
+}

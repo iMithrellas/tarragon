@@ -338,9 +338,35 @@ func ResetPluginOverride(name string) error {
 	return nil
 }
 
+// bareTOMLKey reports whether key can be written without quoting.
+func bareTOMLKey(key string) bool {
+	if key == "" {
+		return false
+	}
+	for _, r := range key {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// pluginSectionHeader renders a [plugins.<name>] header, quoting names that
+// are not valid bare TOML keys.
+func pluginSectionHeader(name string) string {
+	if bareTOMLKey(name) {
+		return fmt.Sprintf("[plugins.%s]", name)
+	}
+	escaped := strings.ReplaceAll(name, "\\", "\\\\")
+	escaped = strings.ReplaceAll(escaped, "\"", "\\\"")
+	return fmt.Sprintf("[plugins.\"%s\"]", escaped)
+}
+
 func buildPluginSection(name string, values map[string]any) string {
 	var sb strings.Builder
-	_, _ = fmt.Fprintf(&sb, "[plugins.%s]\n", name)
+	_, _ = fmt.Fprintf(&sb, "%s\n", pluginSectionHeader(name))
 
 	preferred := []string{"enabled", "prefix", "lifecycle_mode"}
 	written := make(map[string]bool, len(values))
@@ -405,12 +431,17 @@ func updatePluginSectionInConfig(name, section string, remove bool) error {
 }
 
 func replacePluginSectionText(content, name, section string, remove bool) string {
-	targetHeader := fmt.Sprintf("[plugins.%s]", name)
+	// Accept both the bare and quoted spelling so hand-written sections are
+	// updated in place instead of being duplicated.
+	targetHeaders := map[string]bool{
+		fmt.Sprintf("[plugins.%s]", name): true,
+		pluginSectionHeader(name):         true,
+	}
 	lines := strings.Split(content, "\n")
 
 	start := -1
 	for i, line := range lines {
-		if strings.TrimSpace(line) == targetHeader {
+		if targetHeaders[strings.TrimSpace(line)] {
 			start = i
 			break
 		}

@@ -1,3 +1,4 @@
+id = "template_c"
 name = "template_c"
 description = "Template C plugin that returns three transformed variants of the input."
 enabled = true
