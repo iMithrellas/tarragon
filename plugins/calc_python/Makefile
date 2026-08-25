@@ -3,7 +3,7 @@ PLUGIN_NAME := calculator
 PLUGIN_DIR := $(CURDIR)
 INSTALL_ROOT := $(HOME)/.local/lib/tarragon/plugins/$(PLUGIN_NAME)
 
-.PHONY: check-deps install uninstall run
+.PHONY: check-deps install uninstall run test
 
 check-deps:
 	@command -v python3 >/dev/null 2>&1 || { echo "python3 not found" >&2; exit 1; }
@@ -25,3 +25,6 @@ uninstall:
 # Quick local test for the calculator
 run:
 	@python3 $(PLUGIN_DIR)/calc_plugin.py --once "2+2"
+
+test:
+	@PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s $(PLUGIN_DIR) -p 'test_*.py'

@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-"""
-Calculator plugin for Tarragon.
-Evaluates basic math expressions with a safe AST parser.
-"""
+"""Calculator and equation solver plugin for Tarragon."""
 
 import argparse
+import ast
 import json
 import logging
 import math
@@ -14,7 +12,6 @@ import socket as sock_mod
 import signal
 import subprocess
 import sys
-import ast
 
 PLUGIN_NAME = os.environ.get("TARRAGON_PLUGIN_NAME", "calculator")
 logging.basicConfig(
@@ -103,8 +100,147 @@ class SafeEval(ast.NodeVisitor):
 
 
 def eval_expr(text: str) -> float:
-    tree = ast.parse(text, mode="eval")
+    tree = ast.parse(normalize_expr(text), mode="eval")
     return SafeEval().visit(tree)
+
+
+def normalize_expr(text: str, *, implicit_multiplication: bool = False) -> str:
+    text = text.strip().replace("^", "**").replace("X", "x")
+    if not implicit_multiplication:
+        return text
+    text = re.sub(
+        r"(?<![\w.])(\d+(?:\.\d*)?|\.\d+)(?=[x(])",
+        r"\1*",
+        text,
+    )
+    text = re.sub(r"(?<=[x)])(?=[x(])", "*", text)
+    return re.sub(r"(?<=[x)])(?=\d)", "*", text)
+
+
+def _add_polynomials(left, right):
+    return tuple(a + b for a, b in zip(left, right))
+
+
+def _subtract_polynomials(left, right):
+    return tuple(a - b for a, b in zip(left, right))
+
+
+def _multiply_polynomials(left, right):
+    result = [0, 0, 0]
+    for left_power, left_coefficient in enumerate(left):
+        for right_power, right_coefficient in enumerate(right):
+            coefficient = left_coefficient * right_coefficient
+            power = left_power + right_power
+            if power > 2:
+                if coefficient != 0:
+                    raise ValueError("equation degree exceeds two")
+                continue
+            result[power] += coefficient
+    return tuple(result)
+
+
+class PolynomialEval(ast.NodeVisitor):
+    """Evaluate an AST as coefficients for c0 + c1*x + c2*x^2."""
+
+    def visit_Expression(self, node):
+        return self.visit(node.body)
+
+    def visit_BinOp(self, node):
+        left = self.visit(node.left)
+        right = self.visit(node.right)
+        if isinstance(node.op, ast.Add):
+            return _add_polynomials(left, right)
+        if isinstance(node.op, ast.Sub):
+            return _subtract_polynomials(left, right)
+        if isinstance(node.op, ast.Mult):
+            return _multiply_polynomials(left, right)
+        if isinstance(node.op, ast.Div):
+            if right[1:] != (0, 0):
+                raise ValueError("cannot divide by x")
+            return tuple(coefficient / right[0] for coefficient in left)
+        if isinstance(node.op, ast.Pow):
+            if right[1:] != (0, 0):
+                raise ValueError("variable exponent is unsupported")
+            exponent = right[0]
+            if left[1:] == (0, 0):
+                return (left[0] ** exponent, 0, 0)
+            if not isinstance(exponent, int) or not 0 <= exponent <= 2:
+                raise ValueError("equation degree exceeds two")
+            result = (1, 0, 0)
+            for _ in range(exponent):
+                result = _multiply_polynomials(result, left)
+            return result
+        raise ValueError("unsupported operator in equation")
+
+    def visit_UnaryOp(self, node):
+        value = self.visit(node.operand)
+        if isinstance(node.op, ast.UAdd):
+            return value
+        if isinstance(node.op, ast.USub):
+            return tuple(-coefficient for coefficient in value)
+        raise ValueError("unsupported unary operator")
+
+    def visit_Call(self, node):
+        if not isinstance(node.func, ast.Name):
+            raise ValueError("unsupported function")
+        fn = ALLOWED_FUNCS.get(node.func.id)
+        if fn is None:
+            raise ValueError("unsupported function")
+        args = [self.visit(arg) for arg in node.args]
+        if any(arg[1:] != (0, 0) for arg in args):
+            raise ValueError("functions of x are unsupported")
+        return (fn(*(arg[0] for arg in args)), 0, 0)
+
+    def visit_Name(self, node):
+        if node.id == "x":
+            return (0, 1, 0)
+        if node.id in ALLOWED_CONSTS:
+            return (ALLOWED_CONSTS[node.id], 0, 0)
+        raise ValueError("unknown identifier")
+
+    def visit_Constant(self, node):
+        if isinstance(node.value, (int, float)):
+            return (node.value, 0, 0)
+        raise ValueError("unsupported literal")
+
+    def generic_visit(self, node):
+        raise ValueError("unsupported equation")
+
+
+def solve_equation(text: str) -> list[float]:
+    if text.count("=") != 1:
+        raise ValueError("equation must contain one equals sign")
+
+    left_text, right_text = text.split("=", 1)
+    if not left_text.strip() or not right_text.strip():
+        raise ValueError("equation side is empty")
+
+    evaluator = PolynomialEval()
+    left = evaluator.visit(
+        ast.parse(normalize_expr(left_text, implicit_multiplication=True), mode="eval")
+    )
+    right = evaluator.visit(
+        ast.parse(normalize_expr(right_text, implicit_multiplication=True), mode="eval")
+    )
+    constant, linear, quadratic = _subtract_polynomials(left, right)
+
+    if not math.isclose(quadratic, 0, abs_tol=1e-12):
+        discriminant = linear * linear - 4 * quadratic * constant
+        if discriminant < 0 and not math.isclose(discriminant, 0, abs_tol=1e-12):
+            return []
+        discriminant = max(discriminant, 0)
+        root = math.sqrt(discriminant)
+        solutions = [
+            (-linear - root) / (2 * quadratic),
+            (-linear + root) / (2 * quadratic),
+        ]
+        if math.isclose(solutions[0], solutions[1], abs_tol=1e-12):
+            return [solutions[0]]
+        return sorted(solutions)
+
+    if math.isclose(linear, 0, abs_tol=1e-12):
+        return []
+    return [-constant / linear]
 
 
 def format_value(val: float) -> str:
@@ -120,6 +256,32 @@ def looks_like_math(text: str) -> bool:
 
 
 def process(text: str):
+    if "=" in text:
+        try:
+            solutions = solve_equation(text)
+        except Exception:
+            return []
+        results = []
+        for solution in solutions:
+            out = format_value(solution)
+            results.append(
+                {
+                    "id": out,
+                    "label": f"{text.strip()} -> x = {out}",
+                    "description": "Copy to clipboard",
+                    "icon": "accessories-calculator",
+                    "category": "Calculator",
+                    "actions": [
+                        {
+                            "name": "copy",
+                            "default": True,
+                            "description": "Copy to clipboard",
+                        }
+                    ],
+                }
+            )
+        return results
+
     if not looks_like_math(text):
         return []
     try:

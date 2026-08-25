@@ -1,5 +1,5 @@
 name = "calculator"
-description = "Basic math calculator"
+description = "Math calculator and equation solver"
 enabled = true
 entrypoint = "calc_plugin.py"
 lifecycle_mode = "on_demand_persistent"
