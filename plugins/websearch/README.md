@@ -4,11 +4,16 @@ Quick web search plugin that turns prefix shortcuts into search engine URLs.
 
 ## Prefixes
 
-- `g <query>` → Google
-- `yt <query>` → YouTube
-- `ddg <query>` → DuckDuckGo
-- `w <query>` → Wikipedia
-- `gh <query>` → GitHub
+- `@g <query>` → Google
+- `@yt <query>` → YouTube
+- `@ddg <query>` → DuckDuckGo
+- `@w <query>` → Wikipedia
+- `@gh <query>` → GitHub
+
+The leading symbol follows Tarragon's global `prefix_symbol` option and
+defaults to `@`. For example, setting `prefix_symbol = ":"` changes `@g` to
+`:g`. Tarragon passes the configured value to the plugin as
+`TARRAGON_PREFIX_SYMBOL`.
 
 If a known prefix is provided without a query, the plugin returns a usage hint.
 If the prefix does not match one of the supported engines, it returns no results.
@@ -16,9 +21,10 @@ If the prefix does not match one of the supported engines, it returns no results
 ## Examples
 
 ```bash
-python3 websearch_plugin.py tarragon query "g neural networks"
-python3 websearch_plugin.py tarragon query "yt ambient music"
-python3 websearch_plugin.py tarragon query "ddg"
+python3 websearch_plugin.py --once "@g neural networks"
+python3 websearch_plugin.py --once "@yt ambient music"
+python3 websearch_plugin.py --once "@ddg"
+TARRAGON_PREFIX_SYMBOL=: python3 websearch_plugin.py --once ":g neural networks"
 ```
 
 ## Install

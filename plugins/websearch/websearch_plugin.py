@@ -22,20 +22,37 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Bare engine tokens. The leading symbol is not baked in here: it comes from
+# Tarragon's global prefix_symbol setting, so changing that setting moves every
+# engine shortcut with it.
 ENGINES = {
-    "@g": ("Google", "https://www.google.com/search?q={query}"),
-    "@yt": ("YouTube", "https://www.youtube.com/results?search_query={query}"),
-    "@ddg": ("DuckDuckGo", "https://duckduckgo.com/?q={query}"),
-    "@w": ("Wikipedia", "https://en.wikipedia.org/wiki/Special:Search?search={query}"),
-    "@gh": ("GitHub", "https://github.com/search?q={query}"),
+    "g": ("Google", "https://www.google.com/search?q={query}"),
+    "yt": ("YouTube", "https://www.youtube.com/results?search_query={query}"),
+    "ddg": ("DuckDuckGo", "https://duckduckgo.com/?q={query}"),
+    "w": ("Wikipedia", "https://en.wikipedia.org/wiki/Special:Search?search={query}"),
+    "gh": ("GitHub", "https://github.com/search?q={query}"),
 }
+
+DEFAULT_PREFIX_SYMBOL = "@"
+
+
+def prefix_symbol() -> str:
+    return os.environ.get("TARRAGON_PREFIX_SYMBOL", "").strip() or DEFAULT_PREFIX_SYMBOL
+
+
+def engine_for(token: str):
+    """Resolve a typed token such as "@yt" to its engine definition."""
+    symbol = prefix_symbol()
+    token = token.strip().lower()
+    if not token.startswith(symbol):
+        return None
+    return ENGINES.get(token[len(symbol):])
 
 
 def process(text: str):
     prefix, _, query = text.partition(" ")
-    prefix = prefix.strip().lower()
 
-    engine = ENGINES.get(prefix)
+    engine = engine_for(prefix)
     if not engine:
         return []
 
@@ -44,7 +61,7 @@ def process(text: str):
         return [
             {
                 "id": "websearch-hint",
-                "label": f"Type '{prefix} <query>' to search {name}",
+                "label": f"Type '{prefix.strip().lower()} <query>' to search {name}",
                 "description": f"Search on {name}",
                 "icon": name.lower(),
                 "category": "Web",

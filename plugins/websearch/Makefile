@@ -24,4 +24,4 @@ uninstall:
 
 # Quick local test for the websearch plugin
 run:
-	@python3 $(PLUGIN_DIR)/websearch_plugin.py --once "g tarragon launcher"
+	@python3 $(PLUGIN_DIR)/websearch_plugin.py --once "@g tarragon launcher"
