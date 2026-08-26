@@ -13,10 +13,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/mithrel-dots/tarragon/internal/config"
 	"github.com/mithrel-dots/tarragon/internal/db"
 	"github.com/mithrel-dots/tarragon/internal/plugins"
 	"github.com/mithrel-dots/tarragon/internal/wire"
-	"github.com/spf13/viper"
 )
 
 var querySeq uint64
@@ -228,7 +228,7 @@ func handleUIClient(ctx context.Context, conn net.Conn, mgr *plugins.Manager, re
 			})
 			continue
 		case "reload":
-			if err := viper.ReadInConfig(); err != nil {
+			if err := config.ReloadConfig(); err != nil {
 				_ = wire.WriteMsg(conn, &wire.ReloadResponse{Type: "reload_response", Success: false, Message: fmt.Sprintf("failed to read config: %v", err)})
 				continue
 			}
@@ -306,7 +306,7 @@ func handleUIClient(ctx context.Context, conn net.Conn, mgr *plugins.Manager, re
 		case "restart":
 			// Re-read manifests and overrides first so a restart also picks up
 			// plugins installed or reconfigured since the daemon started.
-			if err := viper.ReadInConfig(); err != nil {
+			if err := config.ReloadConfig(); err != nil {
 				log.Printf("[UI] restart: could not re-read config: %v", err)
 			}
 			mgr.Lock()

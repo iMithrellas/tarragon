@@ -233,6 +233,233 @@ func TestFindConfigFileNotFound(t *testing.T) {
 	}
 }
 
+func TestLoadConfigMergesTOMLDropInsLexically(t *testing.T) {
+	resetFlags()
+	defer resetFlags()
+
+	configDir := filepath.Join(t.TempDir(), "tarragon")
+	dropInDir := filepath.Join(configDir, "tarragon.d")
+	if err := os.MkdirAll(dropInDir, 0o755); err != nil {
+		t.Fatalf("mkdir drop-in dir: %v", err)
+	}
+	primaryPath := filepath.Join(configDir, "tarragon.toml")
+	if err := os.WriteFile(primaryPath, []byte(strings.Join([]string{
+		"result_ordering = \"primary\"",
+		"prefix_symbol = \"@\"",
+		"[plugins.alpha]",
+		"enabled = true",
+		"prefix = \"primary\"",
+	}, "\n")), 0o644); err != nil {
+		t.Fatalf("write primary config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dropInDir, "10-disable.toml"), []byte(strings.Join([]string{
+		"result_ordering = \"first\"",
+		"[plugins.alpha]",
+		"enabled = false",
+	}, "\n")), 0o644); err != nil {
+		t.Fatalf("write first drop-in: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dropInDir, "20-prefix.toml"), []byte(strings.Join([]string{
+		"result_ordering = \"second\"",
+		"[plugins.alpha]",
+		"prefix = \"later\"",
+	}, "\n")), 0o644); err != nil {
+		t.Fatalf("write second drop-in: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dropInDir, "99-ignored.yaml"), []byte("result_ordering: ignored\n"), 0o644); err != nil {
+		t.Fatalf("write ignored file: %v", err)
+	}
+
+	if err := LoadConfig(configDir); err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	if got := viper.GetString("result_ordering"); got != "second" {
+		t.Fatalf("result_ordering = %q, want lexical last value", got)
+	}
+	if got := viper.GetBool("plugins.alpha.enabled"); got {
+		t.Fatal("nested enabled value from first drop-in was lost")
+	}
+	if got := viper.GetString("plugins.alpha.prefix"); got != "later" {
+		t.Fatalf("plugin prefix = %q, want later", got)
+	}
+	if got := viper.GetString("prefix_symbol"); got != "@" {
+		t.Fatalf("primary-only value = %q, want @", got)
+	}
+	if got := viper.ConfigFileUsed(); got != primaryPath {
+		t.Fatalf("ConfigFileUsed = %q, want primary %q", got, primaryPath)
+	}
+}
+
+func TestLoadConfigPrecedenceEnvironmentThenExplicitOverride(t *testing.T) {
+	resetFlags()
+	defer resetFlags()
+	t.Setenv("RESULT_ORDERING", "environment")
+	t.Setenv("PLUGINS_ALPHA_ENABLED", "false")
+
+	configDir := filepath.Join(t.TempDir(), "tarragon")
+	dropInDir := filepath.Join(configDir, "tarragon.d")
+	if err := os.MkdirAll(dropInDir, 0o755); err != nil {
+		t.Fatalf("mkdir drop-in dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "tarragon.toml"), []byte("result_ordering = \"primary\"\n[plugins.alpha]\nenabled = true\n"), 0o644); err != nil {
+		t.Fatalf("write primary config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dropInDir, "10-local.toml"), []byte("result_ordering = \"drop-in\"\n"), 0o644); err != nil {
+		t.Fatalf("write drop-in: %v", err)
+	}
+
+	if err := LoadConfig(configDir); err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if got := viper.GetString("result_ordering"); got != "environment" {
+		t.Fatalf("environment value = %q, want environment", got)
+	}
+	if got := viper.GetBool("plugins.alpha.enabled"); got {
+		t.Fatal("nested plugin environment override was not applied")
+	}
+
+	// The CLI applies explicitly changed flags through viper.Set.
+	viper.Set("result_ordering", "flag")
+	if err := ReloadConfig(); err != nil {
+		t.Fatalf("ReloadConfig: %v", err)
+	}
+	if got := viper.GetString("result_ordering"); got != "flag" {
+		t.Fatalf("explicit override = %q, want flag", got)
+	}
+}
+
+func TestReloadConfigReappliesDropIns(t *testing.T) {
+	resetFlags()
+	defer resetFlags()
+
+	configDir := filepath.Join(t.TempDir(), "tarragon")
+	dropInDir := filepath.Join(configDir, "tarragon.d")
+	if err := os.MkdirAll(dropInDir, 0o755); err != nil {
+		t.Fatalf("mkdir drop-in dir: %v", err)
+	}
+	primaryPath := filepath.Join(configDir, "tarragon.toml")
+	dropInPath := filepath.Join(dropInDir, "10-local.toml")
+	if err := os.WriteFile(primaryPath, []byte("prefix_symbol = \"@\"\nresult_ordering = \"primary\"\n"), 0o644); err != nil {
+		t.Fatalf("write primary config: %v", err)
+	}
+	if err := os.WriteFile(dropInPath, []byte("prefix_symbol = \":\"\nresult_ordering = \"old\"\n"), 0o644); err != nil {
+		t.Fatalf("write drop-in: %v", err)
+	}
+	if err := LoadConfig(configDir); err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	if err := os.WriteFile(dropInPath, []byte("result_ordering = \"new\"\n"), 0o644); err != nil {
+		t.Fatalf("replace drop-in: %v", err)
+	}
+	if err := ReloadConfig(); err != nil {
+		t.Fatalf("ReloadConfig: %v", err)
+	}
+
+	if got := viper.GetString("result_ordering"); got != "new" {
+		t.Fatalf("reloaded value = %q, want new", got)
+	}
+	if got := viper.GetString("prefix_symbol"); got != "@" {
+		t.Fatalf("removed drop-in key = %q, want primary fallback", got)
+	}
+	if got := viper.ConfigFileUsed(); got != primaryPath {
+		t.Fatalf("ConfigFileUsed = %q, want primary %q", got, primaryPath)
+	}
+}
+
+func TestLoadConfigReportsMalformedDropIn(t *testing.T) {
+	resetFlags()
+	defer resetFlags()
+
+	configDir := filepath.Join(t.TempDir(), "tarragon")
+	dropInDir := filepath.Join(configDir, "tarragon.d")
+	if err := os.MkdirAll(dropInDir, 0o755); err != nil {
+		t.Fatalf("mkdir drop-in dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "tarragon.toml"), []byte("run_ipc = true\n"), 0o644); err != nil {
+		t.Fatalf("write primary config: %v", err)
+	}
+	badPath := filepath.Join(dropInDir, "20-bad.toml")
+	if err := os.WriteFile(badPath, []byte("prefix_symbol = [\n"), 0o644); err != nil {
+		t.Fatalf("write malformed drop-in: %v", err)
+	}
+
+	err := LoadConfig(configDir)
+	if err == nil {
+		t.Fatal("expected malformed drop-in to fail loading")
+	}
+	if !strings.Contains(err.Error(), badPath) {
+		t.Fatalf("error %q does not identify malformed drop-in %q", err, badPath)
+	}
+}
+
+func TestReloadConfigKeepsPreviousValuesWhenDropInIsMalformed(t *testing.T) {
+	resetFlags()
+	defer resetFlags()
+
+	configDir := filepath.Join(t.TempDir(), "tarragon")
+	dropInDir := filepath.Join(configDir, "tarragon.d")
+	if err := os.MkdirAll(dropInDir, 0o755); err != nil {
+		t.Fatalf("mkdir drop-in dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "tarragon.toml"), []byte("result_ordering = \"primary\"\n"), 0o644); err != nil {
+		t.Fatalf("write primary config: %v", err)
+	}
+	dropInPath := filepath.Join(dropInDir, "10-local.toml")
+	if err := os.WriteFile(dropInPath, []byte("result_ordering = \"valid\"\n"), 0o644); err != nil {
+		t.Fatalf("write drop-in: %v", err)
+	}
+	if err := LoadConfig(configDir); err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	if err := os.WriteFile(dropInPath, []byte("result_ordering = [\n"), 0o644); err != nil {
+		t.Fatalf("corrupt drop-in: %v", err)
+	}
+	if err := ReloadConfig(); err == nil {
+		t.Fatal("expected malformed drop-in to fail reload")
+	}
+	if got := viper.GetString("result_ordering"); got != "valid" {
+		t.Fatalf("failed reload changed effective value to %q, want valid", got)
+	}
+}
+
+func TestWritePluginOverrideUpdatesPrimaryBelowDropIn(t *testing.T) {
+	resetFlags()
+	defer resetFlags()
+
+	configDir := filepath.Join(t.TempDir(), "tarragon")
+	dropInDir := filepath.Join(configDir, "tarragon.d")
+	if err := os.MkdirAll(dropInDir, 0o755); err != nil {
+		t.Fatalf("mkdir drop-in dir: %v", err)
+	}
+	primaryPath := filepath.Join(configDir, "tarragon.toml")
+	if err := os.WriteFile(primaryPath, []byte("[plugins.alpha]\nprefix = \"primary\"\n"), 0o644); err != nil {
+		t.Fatalf("write primary config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dropInDir, "10-local.toml"), []byte("[plugins.alpha]\nprefix = \"drop-in\"\n"), 0o644); err != nil {
+		t.Fatalf("write drop-in: %v", err)
+	}
+	if err := LoadConfig(configDir); err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	if err := WritePluginOverride("alpha", map[string]any{"prefix": "command"}); err != nil {
+		t.Fatalf("WritePluginOverride: %v", err)
+	}
+	primary, err := os.ReadFile(primaryPath)
+	if err != nil {
+		t.Fatalf("read primary config: %v", err)
+	}
+	if !strings.Contains(string(primary), "prefix = \"command\"") {
+		t.Fatalf("primary config was not updated:\n%s", primary)
+	}
+	if got := viper.GetString("plugins.alpha.prefix"); got != "drop-in" {
+		t.Fatalf("effective prefix = %q, want higher-precedence drop-in", got)
+	}
+}
+
 func TestWritePluginOverridePreservesCommentsAndUpdatesSection(t *testing.T) {
 	resetFlags()
 	defer resetFlags()

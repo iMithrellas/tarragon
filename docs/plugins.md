@@ -116,7 +116,8 @@ The daemon passes the id to plugins as `TARRAGON_PLUGIN_NAME` and `TARRAGON_PLUG
 
 ## Configuration Overrides
 
-Tarragon-level plugin settings are overridden in the main config file, keyed by plugin id:
+Tarragon-level plugin settings are overridden in the configuration stack,
+keyed by plugin id:
 
 ```toml
 [plugins.system_control]
@@ -127,7 +128,12 @@ lifecycle_mode = "on_call"
 
 Only `enabled`, `prefix` and `lifecycle_mode` are supported. Any other key, or a section that matches no installed plugin id, is ignored and reported as a warning in the daemon log. Sections keyed by display name still apply for backwards compatibility, but are deprecated and warn.
 
-Overrides can also be written with `tarragon plugin config <id> --prefix @sys`, which updates the config file and asks a running daemon to reload. Plugin-specific settings that Tarragon does not understand belong in the plugin's own config file instead.
+Overrides can also be written with `tarragon plugin config <id> --prefix sys`,
+which updates the primary `tarragon.toml` and asks a running daemon to reload.
+Settings in a higher-precedence `tarragon.d/*.toml` file still win. See the
+main README for the complete configuration precedence order. Plugin-specific
+settings that Tarragon does not understand belong in the plugin's own config
+file instead.
 
 Lifecycle modes:
 - `daemon`: started by the daemon at startup and kept running.

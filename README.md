@@ -68,6 +68,38 @@ Plugins can be invoked directly or contextually, and can expose commands, values
 
 ---
 
+## Configuration
+
+Tarragon reads its primary config from
+`$XDG_CONFIG_HOME/tarragon/tarragon.toml` (normally
+`~/.config/tarragon/tarragon.toml`). Use `--config-dir` to select a different
+directory.
+
+Optional local or packaged overrides belong in `tarragon.d/*.toml` beside the
+primary file:
+
+```text
+~/.config/tarragon/
+|-- tarragon.toml
+`-- tarragon.d/
+    |-- 10-host.toml
+    `-- 90-local.toml
+```
+
+Drop-ins are merged in filename order. Later files override earlier files,
+including individual keys in nested plugin sections. Files in `tarragon.d`
+that do not end in `.toml` are ignored.
+
+The complete precedence order, from lowest to highest, is:
+
+1. `tarragon.toml`
+2. `tarragon.d/*.toml` in lexical filename order
+3. Environment variables such as `RESULT_ORDERING` and
+   `PLUGINS_CALCULATOR_ENABLED`
+4. Explicitly supplied command-line flags
+
+Daemon reload and restart requests re-read the complete stack.
+
 ## Plugin Configuration
 
 See [docs/plugins.md](docs/plugins.md).

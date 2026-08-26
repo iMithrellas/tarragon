@@ -2,6 +2,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -117,31 +118,93 @@ func LoadConfig(configDir string) error {
 	if err != nil {
 		return err
 	}
+	return loadConfigPath(path)
+}
 
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("error creating config directory: %w", err)
+// ReloadConfig reloads the primary config and every TOML drop-in. The primary
+// path remains Viper's ConfigFileUsed value so commands that persist settings
+// never write to the last merged drop-in by mistake.
+func ReloadConfig() error {
+	path := viper.ConfigFileUsed()
+	if path == "" {
+		return fmt.Errorf("config file path is not set")
+	}
+	return loadConfigPath(path)
+}
+
+func loadConfigPath(path string) error {
+	setConfigFile(path)
+	defer setConfigFile(path)
+
+	loaded := viper.New()
+	setViperConfigFile(loaded, path)
+	if err := loaded.ReadInConfig(); err != nil {
+		return fmt.Errorf("error reading config file %s: %w", path, err)
 	}
 
-	viper.SetConfigFile(path)
-
-	ext := strings.TrimPrefix(filepath.Ext(path), ".")
-	if ext != "" {
-		viper.SetConfigType(ext)
-	} else {
-		viper.SetConfigType("toml")
+	dropIns, err := configDropIns(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	for _, dropIn := range dropIns {
+		loaded.SetConfigFile(dropIn)
+		loaded.SetConfigType("toml")
+		if err := loaded.MergeInConfig(); err != nil {
+			return fmt.Errorf("error reading config drop-in %s: %w", dropIn, err)
+		}
 	}
 
-	if err := viper.ReadInConfig(); err != nil {
-		return fmt.Errorf("error reading config file: %w", err)
+	settings := loaded.AllSettings()
+	delete(settings, "_comments")
+	encoded, err := json.Marshal(settings)
+	if err != nil {
+		return fmt.Errorf("encode merged config: %w", err)
 	}
 
-	// Remove JSON comments key if present
-	viper.Set("_comments", nil)
-
+	// ReadConfig replaces only Viper's config layer, preserving the higher
+	// precedence environment and explicit override layers. Do this only after
+	// every file parsed successfully so a failed reload remains atomic.
+	viper.SetConfigType("json")
+	if err := viper.ReadConfig(bytes.NewReader(encoded)); err != nil {
+		return fmt.Errorf("apply merged config: %w", err)
+	}
 	SetupEnvironment()
-
 	return nil
+}
+
+func setConfigFile(path string) {
+	setViperConfigFile(viper.GetViper(), path)
+}
+
+func setViperConfigFile(instance *viper.Viper, path string) {
+	instance.SetConfigFile(path)
+	ext := strings.TrimPrefix(filepath.Ext(path), ".")
+	if ext == "" {
+		ext = "toml"
+	}
+	instance.SetConfigType(ext)
+}
+
+func configDropIns(configDir string) ([]string, error) {
+	dropInDir := filepath.Join(configDir, "tarragon.d")
+	entries, err := os.ReadDir(dropInDir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read config drop-in directory %s: %w", dropInDir, err)
+	}
+
+	paths := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".toml" {
+			continue
+		}
+		paths = append(paths, filepath.Join(dropInDir, entry.Name()))
+	}
+	// os.ReadDir returns filename order, but keep the contract explicit.
+	sort.Strings(paths)
+	return paths, nil
 }
 
 // InitConfig handles config initialization: generation if requested,
@@ -292,8 +355,9 @@ func formatYAMLValue(key string, value interface{}) string {
 	}
 }
 
-// WritePluginOverride updates [plugins.<name>] keys and writes config while
-// preserving comments by editing the TOML text directly.
+// WritePluginOverride updates [plugins.<name>] in the primary config while
+// preserving comments by editing the TOML text directly. Higher-precedence
+// drop-ins remain authoritative if they set the same key.
 func WritePluginOverride(name string, overrides map[string]any) error {
 	if strings.TrimSpace(name) == "" {
 		return fmt.Errorf("plugin name is required")
@@ -302,14 +366,12 @@ func WritePluginOverride(name string, overrides map[string]any) error {
 		return fmt.Errorf("at least one override is required")
 	}
 
-	baseKey := fmt.Sprintf("plugins.%s", name)
-	for k, v := range overrides {
-		viper.Set(baseKey+"."+k, v)
+	sectionValues, err := primaryPluginOverrides(name)
+	if err != nil {
+		return err
 	}
-
-	sectionValues := viper.GetStringMap(baseKey)
-	if len(sectionValues) == 0 {
-		return fmt.Errorf("no plugin override values found for %q", name)
+	for key, value := range overrides {
+		sectionValues[key] = value
 	}
 
 	section := buildPluginSection(name, sectionValues)
@@ -317,7 +379,7 @@ func WritePluginOverride(name string, overrides map[string]any) error {
 		return err
 	}
 
-	if err := viper.ReadInConfig(); err != nil {
+	if err := ReloadConfig(); err != nil {
 		return fmt.Errorf("sync config after write: %w", err)
 	}
 
@@ -331,16 +393,38 @@ func ResetPluginOverride(name string) error {
 		return fmt.Errorf("plugin name is required")
 	}
 
-	viper.Set(fmt.Sprintf("plugins.%s", name), nil)
 	if err := updatePluginSectionInConfig(name, "", true); err != nil {
 		return err
 	}
 
-	if err := viper.ReadInConfig(); err != nil {
+	if err := ReloadConfig(); err != nil {
 		return fmt.Errorf("sync config after write: %w", err)
 	}
 
 	return nil
+}
+
+func primaryPluginOverrides(name string) (map[string]any, error) {
+	path := viper.ConfigFileUsed()
+	if path == "" {
+		return nil, fmt.Errorf("config file path is not set")
+	}
+	if strings.ToLower(filepath.Ext(path)) != ".toml" {
+		return nil, fmt.Errorf("plugin overrides require TOML config, got %s", path)
+	}
+
+	primary := viper.New()
+	primary.SetConfigFile(path)
+	primary.SetConfigType("toml")
+	if err := primary.ReadInConfig(); err != nil {
+		return nil, fmt.Errorf("read primary config file: %w", err)
+	}
+
+	values := primary.GetStringMap(fmt.Sprintf("plugins.%s", name))
+	if values == nil {
+		values = make(map[string]any)
+	}
+	return values, nil
 }
 
 // bareTOMLKey reports whether key can be written without quoting.
