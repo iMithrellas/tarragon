@@ -387,8 +387,11 @@ func handleUIClient(ctx context.Context, conn net.Conn, mgr *plugins.Manager, re
 		if !hasTarget {
 			targetText = input
 		}
+		// A query beginning with the routing symbol is an explicit routing
+		// attempt, even when its prefix is only partially typed or unknown.
+		prefixTargeted := hasTarget || startsWithRoutingPrefix(input)
 
-		go dispatchQuery(ctx, targetText, qid, mgr, reqOut, pluginsReg, store, ui, hasTarget, targetName)
+		go dispatchQuery(ctx, targetText, qid, mgr, reqOut, pluginsReg, store, ui, prefixTargeted, targetName)
 	}
 }
 
@@ -493,6 +496,12 @@ func isEligibleForDispatch(name string, cfg plugins.PluginConfig, hasTarget bool
 		return false
 	}
 	return cfg.ProvidesGeneral
+}
+
+func startsWithRoutingPrefix(input string) bool {
+	text := strings.TrimSpace(input)
+	symbol := strings.TrimSpace(plugins.PrefixSymbol())
+	return symbol != "" && strings.HasPrefix(text, symbol)
 }
 
 // atomicAdd wraps sync/atomic.AddUint64 for clarity.

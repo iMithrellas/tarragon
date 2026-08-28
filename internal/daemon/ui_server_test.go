@@ -682,6 +682,55 @@ func TestDispatchQuery_ExplicitTargetBypassesGeneralEligibility(t *testing.T) {
 	}
 }
 
+func TestDispatchQuery_PartialPrefixDoesNotFanOutToGeneralPlugins(t *testing.T) {
+	ctx := context.Background()
+	mgr := plugins.NewManager("-")
+	mgr.Plugins["general"] = &plugins.Plugin{Config: plugins.PluginConfig{
+		Name:            "general",
+		Enabled:         true,
+		Lifecycle:       plugins.LifecycleDaemon,
+		ProvidesGeneral: true,
+	}}
+
+	store := newAggregateStore(10, "global", nil, 0.3)
+	store.create("q-partial", "cli", "@a")
+	uiReg := newUIRegistry()
+	reqOut := make(chan pluginRequest, 16)
+	plugReg := &pluginRegistry{conns: map[string]net.Conn{}, scanners: map[string]*bufio.Scanner{}}
+	srv, cli := net.Pipe()
+	t.Cleanup(func() {
+		_ = srv.Close()
+		_ = cli.Close()
+	})
+	plugReg.set("general", srv, wire.NewScanner(srv))
+
+	dispatchQuery(ctx, "@a", "q-partial", mgr, reqOut, plugReg, store, uiReg, true, "")
+
+	select {
+	case req := <-reqOut:
+		t.Fatalf("partial prefix should not be dispatched to general plugins: %+v", req)
+	default:
+	}
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if got := len(store.byID["q-partial"].Plugins); got != 0 {
+		t.Fatalf("partial prefix should have no expected plugins, got %d", got)
+	}
+}
+
+func TestStartsWithRoutingPrefixUsesConfiguredSymbol(t *testing.T) {
+	viper.Set("prefix_symbol", ":")
+	t.Cleanup(viper.Reset)
+
+	if !startsWithRoutingPrefix(" :calc") {
+		t.Fatal("expected configured routing symbol to be recognized")
+	}
+	if startsWithRoutingPrefix("@calc") {
+		t.Fatal("default routing symbol should not be recognized after configuration")
+	}
+}
+
 func TestResolvePrefixTarget(t *testing.T) {
 	mgr := &plugins.Manager{Plugins: map[string]*plugins.Plugin{
 		"calculator":     {Config: plugins.PluginConfig{ID: "calculator", Enabled: true, Prefix: "calc"}},
