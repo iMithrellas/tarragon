@@ -329,6 +329,20 @@ Example:
 }
 ```
 
+An action can request query replacement instead of plugin selection:
+
+```json
+{
+  "name": "Episodes",
+  "type": "query_replace",
+  "query": "@anime episodes 154587"
+}
+```
+
+The UI replaces its input with `query`, remains open, and submits a normal
+query request. It must not send a select request for this action. Actions
+without `type: "query_replace"` retain the existing select behavior.
+
 ## Makefile Specification (Required)
 
 Your Makefile must define the following targets:

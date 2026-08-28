@@ -73,6 +73,24 @@ def process(text: str):
     clean_query = query.strip()
     encoded_query = quote_plus(clean_query)
     url = template.format(query=encoded_query)
+    actions = [
+        {
+            "name": "open",
+            "default": True,
+            "description": "Open in browser",
+        }
+    ]
+    for token, (alternate_name, _) in ENGINES.items():
+        if alternate_name == name:
+            continue
+        actions.append(
+            {
+                "name": f"search_{token}",
+                "type": "query_replace",
+                "query": f"{prefix_symbol()}{token} {clean_query}",
+                "description": f"Search with {alternate_name}",
+            }
+        )
     return [
         {
             "id": url,
@@ -81,13 +99,7 @@ def process(text: str):
             "icon": name.lower(),
             "category": "Web",
             "score": 1.0,
-            "actions": [
-                {
-                    "name": "open",
-                    "default": True,
-                    "description": "Open in browser",
-                }
-            ],
+            "actions": actions,
         }
     ]
 

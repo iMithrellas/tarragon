@@ -17,6 +17,8 @@ defaults to `@`. For example, setting `prefix_symbol = ":"` changes `@g` to
 
 If a known prefix is provided without a query, the plugin returns a usage hint.
 If the prefix does not match one of the supported engines, it returns no results.
+Search results also offer query-replacement actions for every other supported
+engine, keeping the UI open while rerunning the search with that engine.
 
 ## Examples
 

@@ -36,6 +36,33 @@ class WebsearchPluginTest(unittest.TestCase):
         self.assertEqual(results[0]["id"], "websearch-hint")
         self.assertIn("@ddg", results[0]["label"])
 
+    def test_search_result_offers_query_replacement_for_other_engines(self):
+        with mock.patch.dict(plugin.os.environ, {}, clear=True):
+            result = plugin.process("@g ambient music")[0]
+
+        self.assertEqual(result["actions"][0]["name"], "open")
+        replacements = [
+            action for action in result["actions"] if action.get("type") == "query_replace"
+        ]
+        self.assertEqual(
+            {action["query"] for action in replacements},
+            {
+                "@yt ambient music",
+                "@ddg ambient music",
+                "@w ambient music",
+                "@gh ambient music",
+            },
+        )
+        self.assertEqual(
+            {action["description"] for action in replacements},
+            {
+                "Search with YouTube",
+                "Search with DuckDuckGo",
+                "Search with Wikipedia",
+                "Search with GitHub",
+            },
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

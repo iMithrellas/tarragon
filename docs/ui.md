@@ -43,6 +43,24 @@ rather than hardcoding a path.
    - Replace your displayed snapshot with the latest one for that `query_id`.
 3) On exit, write NDJSON line `{ "type": "detach", "client_id": "<id>" }\n` (best-effort) to let the daemon purge memory.
 
+### Query Replacement Actions
+
+An action may use `type: "query_replace"` and provide a `query`:
+
+```json
+{
+  "name": "Episodes",
+  "type": "query_replace",
+  "query": "@anime episodes 154587"
+}
+```
+
+When the user invokes this action, replace the input text with `query` and
+send it as a normal query request. Keep the socket and UI open; process the
+acknowledgement and updates exactly as for any other query. Do not send a
+select request for this action. Actions without this type retain the existing
+select behavior.
+
 NDJSON framing means each message is exactly one JSON object on one line, terminated by `\n`.
 
 ## Tips
@@ -81,6 +99,9 @@ Plugin state meanings:
 - `done`: the plugin responded with one or more normalized result entries.
 - `empty`: the plugin responded successfully but produced no normalized result entries.
 - `error`: the plugin failed, timed out, or returned an error payload.
+
+Result actions may also include `type` and `query`. The `query_replace` type
+uses `query` as the replacement input and starts a normal query.
 
 ## Example: Python
 
