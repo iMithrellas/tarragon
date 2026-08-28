@@ -10,7 +10,6 @@ from pathlib import Path
 import shlex
 import signal
 import socket as sock_mod
-import subprocess
 import sys
 import threading
 import time
@@ -184,6 +183,52 @@ def process(text: str, cache: DesktopEntryCache) -> list[dict]:
     return scored[:MAX_RESULTS]
 
 
+def _launch_detached(cmd: list[str]) -> None:
+    """Launch cmd without retaining it as a child of this plugin."""
+    read_fd, write_fd = os.pipe()
+    try:
+        pid = os.fork()
+        if pid == 0:
+            try:
+                os.close(read_fd)
+                os.setsid()
+
+                # The session leader exits after handing the app to init/systemd.
+                if os.fork() > 0:
+                    os._exit(0)
+
+                devnull = os.open(os.devnull, os.O_RDWR)
+                for fd in (0, 1, 2):
+                    os.dup2(devnull, fd)
+                if devnull > 2:
+                    os.close(devnull)
+                os.execvp(cmd[0], cmd)
+            except BaseException as err:
+                try:
+                    os.write(write_fd, str(err).encode("utf-8", errors="replace"))
+                finally:
+                    os._exit(127)
+
+        os.close(write_fd)
+        while True:
+            try:
+                waited_pid, status = os.waitpid(pid, 0)
+                break
+            except InterruptedError:
+                continue
+        if waited_pid != pid or status != 0:
+            raise RuntimeError("detached launcher failed")
+        error = os.read(read_fd, 4096)
+        if error:
+            raise OSError(error.decode("utf-8", errors="replace"))
+    finally:
+        for fd in (read_fd, write_fd):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
 def _start_refresh_thread(cache: DesktopEntryCache, stop_event: threading.Event) -> threading.Thread:
     def _loop():
         while not stop_event.wait(RESCAN_INTERVAL_SECONDS):
@@ -272,12 +317,7 @@ def run_daemon() -> int:
                 cmd = [part for part in cmd if part not in desktop_tokens]
                 if not cmd:
                     raise ValueError("empty command")
-                subprocess.Popen(
-                    cmd,
-                    start_new_session=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
+                _launch_detached(cmd)
                 success, message = True, f"Launched {cmd[0]}"
             except Exception as err:
                 success, message = False, str(err)
