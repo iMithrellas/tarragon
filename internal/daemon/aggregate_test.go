@@ -41,6 +41,27 @@ func TestAggregateStoreCreateUpdateSnapshot(t *testing.T) {
 	}
 }
 
+func TestAggregatePreservesQueryReplacementAction(t *testing.T) {
+	s := newAggregateStore(10, "global", nil, 0.3)
+	s.create("q1", "cli1", "@anime frieren")
+	if _, ok := s.setExpectedPlugins("q1", []string{"anime"}); !ok {
+		t.Fatalf("expected setExpectedPlugins ok")
+	}
+
+	snap, ok := s.update("q1", "anime", 1, json.RawMessage(`{"results":[{"id":"episodes","label":"Episodes","actions":[{"name":"Episodes","type":"query_replace","query":"@anime episodes 154587"}]}]}`))
+	if !ok {
+		t.Fatalf("expected update ok")
+	}
+
+	var ag aggregate
+	if err := json.Unmarshal(snap, &ag); err != nil {
+		t.Fatalf("unmarshal snap: %v", err)
+	}
+	if got := ag.List[0].Actions[0]; got.Type != wire.ActionTypeQueryReplace || got.Query != "@anime episodes 154587" {
+		t.Fatalf("unexpected query replacement action: %+v", got)
+	}
+}
+
 func TestAggregateStorePluginStates(t *testing.T) {
 	s := newAggregateStore(10, "global", nil, 0.3)
 	s.create("q1", "cli1", "hello")

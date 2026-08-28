@@ -60,9 +60,14 @@ const (
 	MsgStatus         = "status"
 )
 
+// ActionTypeQueryReplace tells a UI to submit the action's query as a new input.
+const ActionTypeQueryReplace = "query_replace"
+
 // Action describes a named action a plugin can perform on a result.
 type Action struct {
 	Name        string `json:"name"`
+	Type        string `json:"type,omitempty"`
+	Query       string `json:"query,omitempty"`
 	Default     bool   `json:"default,omitempty"`
 	Description string `json:"description,omitempty"`
 }
