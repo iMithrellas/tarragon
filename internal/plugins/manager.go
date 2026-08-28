@@ -624,6 +624,7 @@ func (p *Plugin) start(ctx context.Context, ipcEndpoint string, stopTimeout time
 		fmt.Sprintf("TARRAGON_PLUGIN_ID=%s", p.Config.ID),
 		fmt.Sprintf("TARRAGON_PLUGIN_DISPLAY_NAME=%s", p.Config.Name),
 		fmt.Sprintf("TARRAGON_PREFIX_SYMBOL=%s", PrefixSymbol()),
+		fmt.Sprintf("TARRAGON_PLUGIN_PREFIX=%s", p.Config.ResolvedPrefix),
 	)
 	if err := cmd.Start(); err != nil {
 		return err

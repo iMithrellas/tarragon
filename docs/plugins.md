@@ -10,7 +10,7 @@ Plugins declare a lifecycle in `plugin.toml`, and Tarragon runs them according t
 
 ## Directory Layout and Install
 
-Plugins are managed under `~/.local/lib/tarragon/plugins/<plugin_name>/` and loaded by the daemon at startup.
+Plugins are managed under `~/.local/lib/tarragon/plugins/<plugin-id>/` and loaded by the daemon at startup.
 
 Repository layout note:
 
@@ -37,7 +37,7 @@ Integration contract:
 
 ### Restarting Plugins
 
-`tarragon plugin restart [plugin-name]` bounces plugin processes in the running daemon. With no argument every plugin is targeted.
+`tarragon plugin restart [plugin-id]` bounces plugin processes in the running daemon. With no argument every plugin is targeted.
 
 Restart re-reads manifests and config overrides first, so it also picks up plugins installed or reconfigured since the daemon started. Reported status per plugin:
 
@@ -150,6 +150,7 @@ Tarragon supports both global (unprefixed) and explicit prefix-targeted dispatch
 - **Prefix-targeted query**: when input starts with a plugin prefix, Tarragon dispatches only to the matched plugin and forwards query text with the prefix removed.
   - Prefix-targeted dispatch does not depend on `provides_general_suggestions`.
   - If prefixes overlap, the longest matching prefix wins. Equal-length matches are a configuration error; dispatch falls back to the lowest plugin id and the daemon logs a collision warning.
+- **Incomplete or unknown prefix**: any input beginning with the configured global prefix symbol is treated as an explicit routing attempt. If it does not match an enabled plugin prefix, no plugin is dispatched, including general-suggestion plugins.
 
 Use `require_prefix` for strict prefix-only plugins. Use `provides_general_suggestions` as the explicit global-eligibility signal.
 
@@ -175,7 +176,7 @@ The effective prefix is what `tarragon plugin list`, `tarragon plugin config` an
 Treat `connected` as transport state, not total availability. An enabled `on_call` plugin can be dispatchable even while not persistently connected.
 
 Entrypoint path rules:
-- Relative `entrypoint`: resolved from the plugin directory (`~/.local/lib/tarragon/plugins/<name>/...`).
+- Relative `entrypoint`: resolved from the plugin directory (`~/.local/lib/tarragon/plugins/<plugin-id>/...`).
 - Absolute `entrypoint`: executed directly as-is (used by system-enabled plugins).
 - If an absolute entrypoint for a `source = "system"` on-call plugin no longer
   exists, Tarragon resolves its basename through the daemon's `PATH`. This lets
@@ -190,7 +191,7 @@ passed to persistent plugins via `TARRAGON_PLUGINS_ENDPOINT`.
 Protocol:
 1) Connect to the Unix socket path from `TARRAGON_PLUGINS_ENDPOINT`.
 2) Send hello (one NDJSON line):
-   - `{ "type": "hello", "name": "<plugin-name>" }\n`
+   - `{ "type": "hello", "name": "<plugin-id>" }\n`
 3) Loop:
    - Receive request (one NDJSON line):
      - `{ "type": "request", "query_id": "<id>", "text": "<input>" }\n`
@@ -201,9 +202,18 @@ NDJSON framing means each message is exactly one JSON object on one line, termin
 
 The daemon measures latency and merges your response into the shared result snapshot. UIs also receive per-plugin query state metadata derived from dispatch/response events so they can show pending, empty, and error states while a query is still in flight.
 
-Environment variables passed to persistent plugins:
+Environment variables passed to plugins:
 - `TARRAGON_PLUGINS_ENDPOINT`: Unix socket path to connect to (for example, `/run/user/1000/tarragon/plugins.sock`).
-- `TARRAGON_PLUGIN_NAME`: The configured plugin name.
+- `TARRAGON_PLUGIN_NAME`: The stable plugin id used for IPC routing. This is set for persistent and on-call plugins.
+- `TARRAGON_PLUGIN_ID`: The stable plugin id. This is set for persistent and on-call plugins.
+- `TARRAGON_PLUGIN_DISPLAY_NAME`: The human-readable display name. This is set for persistent and on-call plugins.
+- `TARRAGON_PLUGIN_PREFIX`: The plugin's resolved user-facing prefix, or empty
+  when it has no single prefix. This is set for persistent and on-call plugins.
+- `TARRAGON_PREFIX_SYMBOL`: The configured global prefix symbol.
+
+`TARRAGON_PLUGINS_ENDPOINT` is set only for persistent plugins. On-call plugins
+receive the identity and prefix variables above when invoked for a query or
+selection.
 
 ### Socket Locations
 
@@ -225,11 +235,11 @@ should not hardcode a socket path; always read `TARRAGON_PLUGINS_ENDPOINT`.
 import json, os, socket
 
 endpoint = os.environ["TARRAGON_PLUGINS_ENDPOINT"]  # always set by the daemon for persistent plugins
-name = os.environ.get("TARRAGON_PLUGIN_NAME", "my_plugin")
+plugin_id = os.environ.get("TARRAGON_PLUGIN_ID", "my_plugin")
 
 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 s.connect(endpoint)
-s.sendall(json.dumps({"type": "hello", "name": name}).encode() + b"\n")
+s.sendall(json.dumps({"type": "hello", "name": plugin_id}).encode() + b"\n")
 
 f = s.makefile('r')
 while True:
@@ -349,7 +359,7 @@ Your Makefile must define the following targets:
 
 ```
 check-deps:   # verify required toolchain (e.g., python3 or cargo/rustc)
-install:      # build and copy files into ~/.local/lib/tarragon/plugins/<name>/
+install:      # build and copy files into ~/.local/lib/tarragon/plugins/<plugin-id>/
 uninstall:    # remove installed files from the plugin directory
 run:          # local quick test (e.g., ./my_plugin tarragon query "Hello")
 ```

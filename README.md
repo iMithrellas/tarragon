@@ -32,6 +32,7 @@ Plugins can be invoked directly or contextually, and can expose commands, values
 - Fuzzy search with user-configurable scoring.
 - Frecency-based sorting (frequency x recency).
 - Optional icon display (depending on UI backend).
+- Launched applications are detached from the plugin process and remain running across Tarragon daemon restarts.
 
 ### Plugin System
 - **Integrated Suggestions**: Seamlessly blends suggestions from eligible plugins, including bundled plugins for installed applications and other local tasks.
@@ -43,9 +44,9 @@ Plugins can be invoked directly or contextually, and can expose commands, values
     - `on_call`: Executed per request (ephemeral process lifecycle).
 - **Fan-Out/Gather for Suggestions**: Input is broadcast to eligible plugins concurrently. Results are gathered asynchronously and displayed.
 - **Dispatch Controls**: `require_prefix` gates prefix-only plugins, while `provides_general_suggestions` is the general-suggestion eligibility contract for global/unprefixed fan-out.
-- **Optional Prefixes**: Prefixes (e.g., `@search`) can still force explicit dispatch to a specific plugin. Plugins declare a bare token and the leading symbol comes from the `prefix_symbol` config option, so it can be changed globally.
+- **Optional Prefixes**: Prefixes (e.g., `@search`) can still force explicit dispatch to a specific plugin. Plugins declare a bare token and the leading symbol comes from the `prefix_symbol` config option, so it can be changed globally. Any query beginning with that symbol is treated as an explicit routing attempt, so partial or unknown prefixes do not fan out to general plugins.
 - **Graceful Shutdown**: Plugins are stopped with `SIGTERM` and only killed if they overrun `plugin_stop_timeout` (default `5s`), so they can flush state and close sockets.
-- **Live Restart**: `tarragon plugin restart [name]` re-reads manifests and bounces plugin processes without restarting the daemon.
+- **Live Restart**: `tarragon plugin restart [plugin-id]` re-reads manifests and bounces plugin processes without restarting the daemon.
 
 ### Plugin Benchmarking
 - `tarragon bench` connects to the daemon like an external frontend, sends benchmark queries through the UI socket, and prints plugin latency results as a table.

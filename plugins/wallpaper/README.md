@@ -49,9 +49,9 @@ already requires.
 
 ### Own config file
 
-Tarragon does not forward per-plugin settings to plugin processes: the daemon
-sets only `TARRAGON_PLUGINS_ENDPOINT` and `TARRAGON_PLUGIN_NAME`, and
-`tarragon plugin config` only understands `enabled`, `prefix` and
+Tarragon does not forward arbitrary per-plugin settings to plugin processes: the
+daemon sets the standard endpoint, identity, and prefix environment variables,
+and `tarragon plugin config` only understands `enabled`, `prefix` and
 `lifecycle_mode`. So the plugin owns `~/.config/tarragon/wallpaper.toml`, in the
 same spirit as `file_finder` resolving XDG user-dirs itself. A commented
 template is written on first run.

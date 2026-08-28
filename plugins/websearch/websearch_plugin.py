@@ -40,6 +40,10 @@ def prefix_symbol() -> str:
     return os.environ.get("TARRAGON_PREFIX_SYMBOL", "").strip() or DEFAULT_PREFIX_SYMBOL
 
 
+def plugin_prefix() -> str:
+    return os.environ.get("TARRAGON_PLUGIN_PREFIX", "").strip()
+
+
 def engine_for(token: str):
     """Resolve a typed token such as "@yt" to its engine definition."""
     symbol = prefix_symbol()
@@ -47,6 +51,13 @@ def engine_for(token: str):
     if not token.startswith(symbol):
         return None
     return ENGINES.get(token[len(symbol):])
+
+
+def query_prefix(token: str) -> str:
+    resolved = plugin_prefix()
+    if resolved.endswith(token):
+        return resolved
+    return f"{prefix_symbol()}{token}"
 
 
 def process(text: str):
@@ -87,7 +98,7 @@ def process(text: str):
             {
                 "name": f"search_{token}",
                 "type": "query_replace",
-                "query": f"{prefix_symbol()}{token} {clean_query}",
+                "query": f"{query_prefix(token)} {clean_query}",
                 "description": f"Search with {alternate_name}",
             }
         )

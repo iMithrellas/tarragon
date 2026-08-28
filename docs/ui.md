@@ -67,7 +67,7 @@ NDJSON framing means each message is exactly one JSON object on one line, termin
 
 - Concurrency: Multiple queries can run concurrently on the same connection.
 - Snapshots: Each update contains the full current aggregate (no delta merging needed).
-- Plugin progress: the aggregate snapshot includes a `plugins` map keyed by plugin name. UIs can render pending/empty/error states and compute pending elapsed time from `started_at_unix_ms`.
+- Plugin progress: the aggregate snapshot includes a `plugins` map keyed by stable plugin ID. UIs can render pending/empty/error states and compute pending elapsed time from `started_at_unix_ms`.
 
 ### Lifecycle-aware availability
 

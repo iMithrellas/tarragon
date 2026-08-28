@@ -10,7 +10,7 @@ Build and Test
 - make install     # installs to ~/.local/lib/tarragon/plugins/template_rust
 
 Runtime
-- Name: taken from `plugin.toml` (`name = ...`) and passed via `TARRAGON_PLUGIN_NAME` env var.
+- Identity: the stable ID from `plugin.toml` is passed via `TARRAGON_PLUGIN_NAME` and `TARRAGON_PLUGIN_ID`; the display name is passed via `TARRAGON_PLUGIN_DISPLAY_NAME`.
 - Lifecycle is set to `daemon` in `plugin.toml`; quick CLI testing can use the plugin executable's `tarragon query` subcommand.
 - Logs go to stderr (journalctl under the tarragon unit) and `~/.cache/tarragon/plugins/template_rust/plugin.log`.
 - Selection handling: when `{\"type\":\"select\",\"query_id\":\"...\",\"text\":\"<token>\"}` is received, the plugin logs the event and sends a lightweight ack response so the UI can reflect the selection.

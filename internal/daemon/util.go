@@ -22,6 +22,7 @@ func onCallEnv(p *plugins.Plugin) []string {
 		fmt.Sprintf("TARRAGON_PLUGIN_ID=%s", p.Config.ID),
 		fmt.Sprintf("TARRAGON_PLUGIN_DISPLAY_NAME=%s", p.Config.Name),
 		fmt.Sprintf("TARRAGON_PREFIX_SYMBOL=%s", plugins.PrefixSymbol()),
+		fmt.Sprintf("TARRAGON_PLUGIN_PREFIX=%s", p.Config.ResolvedPrefix),
 	)
 }
 

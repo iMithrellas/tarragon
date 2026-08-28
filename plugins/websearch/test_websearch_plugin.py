@@ -63,6 +63,14 @@ class WebsearchPluginTest(unittest.TestCase):
             },
         )
 
+    def test_uses_resolved_plugin_prefix_when_available(self):
+        with mock.patch.dict(
+            plugin.os.environ,
+            {"TARRAGON_PLUGIN_PREFIX": "@yt", "TARRAGON_PREFIX_SYMBOL": ":"},
+            clear=True,
+        ):
+            self.assertEqual(plugin.query_prefix("yt"), "@yt")
+
 
 if __name__ == "__main__":
     unittest.main()

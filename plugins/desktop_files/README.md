@@ -16,6 +16,8 @@ Tarragon Python plugin that scans `.desktop` application launchers and returns f
   - `1.0` name starts with full query
   - `0.8` all query tokens are in name
   - `0.6` tokens are in comment/keywords
+- Launches selected applications detached from the plugin, so they survive a
+  Tarragon daemon or plugin restart
 
 ## Result format
 
@@ -25,7 +27,17 @@ Each suggestion is returned as:
 {
   "id": "exec_command",
   "label": "AppName — Comment",
-  "score": 1.0
+  "description": "Application description",
+  "icon": "application-icon",
+  "category": "Applications",
+  "score": 1.0,
+  "actions": [
+    {
+      "name": "open",
+      "default": true,
+      "description": "Launch application"
+    }
+  ]
 }
 ```
 
@@ -38,7 +50,7 @@ make run
 Or directly:
 
 ```bash
-python3 desktop_files_plugin.py tarragon query "firefox"
+python3 desktop_files_plugin.py --once "firefox"
 ```
 
 ## Install
