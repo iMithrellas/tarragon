@@ -61,6 +61,21 @@ acknowledgement and updates exactly as for any other query. Do not send a
 select request for this action. Actions without this type retain the existing
 select behavior.
 
+An action with `type: "keep_open"` is a normal select action that should not
+dismiss the UI after successful execution:
+
+```json
+{
+  "name": "Copy",
+  "type": "keep_open"
+}
+```
+
+Actions without a type retain the default behavior of dismissing the UI after
+successful selection. UIs should keep the launcher open when a selection fails
+so the user can retry. `query_replace` always keeps the UI open and takes
+precedence over any other action behavior.
+
 NDJSON framing means each message is exactly one JSON object on one line, terminated by `\n`.
 
 ## Tips
@@ -101,7 +116,9 @@ Plugin state meanings:
 - `error`: the plugin failed, timed out, or returned an error payload.
 
 Result actions may also include `type` and `query`. The `query_replace` type
-uses `query` as the replacement input and starts a normal query.
+uses `query` as the replacement input and starts a normal query. The
+`keep_open` type performs a normal selection without dismissing the UI after
+success.
 
 ## Example: Python
 

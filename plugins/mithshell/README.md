@@ -54,7 +54,9 @@ Deliberately not exposed:
   just the `@ms` prefix with no further text returns the full command table
   immediately, so the user sees every available command before filtering.
 - Every result carries a single `run` action (`default: true`), so the UI
-  always has an action to invoke (Enter runs it directly).
+  always has an action to invoke (Enter runs it directly). Notification
+  inhibition, config reload, and theme actions use `type: "keep_open"` so
+  related settings can be tried without reopening Tarragon.
 - Select: runs `mithshell <args>` for the selected command
   (`subprocess.run(..., capture_output=True, text=True, timeout=10)`).
   `success` is `returncode == 0`; `message` is stripped stdout on success, or

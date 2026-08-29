@@ -274,6 +274,7 @@ def process(text: str):
                     "actions": [
                         {
                             "name": "copy",
+                            "type": "keep_open",
                             "default": True,
                             "description": "Copy to clipboard",
                         }
@@ -299,6 +300,7 @@ def process(text: str):
             "actions": [
                 {
                     "name": "copy",
+                    "type": "keep_open",
                     "default": True,
                     "description": "Copy to clipboard",
                 }

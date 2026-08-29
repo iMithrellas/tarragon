@@ -63,7 +63,13 @@ const (
 // ActionTypeQueryReplace tells a UI to submit the action's query as a new input.
 const ActionTypeQueryReplace = "query_replace"
 
+// ActionTypeKeepOpen tells a UI to execute a normal select action without
+// dismissing the launcher after it succeeds.
+const ActionTypeKeepOpen = "keep_open"
+
 // Action describes a named action a plugin can perform on a result.
+// Type is omitted for the default select behavior, or can request a UI mode
+// such as ActionTypeKeepOpen or ActionTypeQueryReplace.
 type Action struct {
 	Name        string `json:"name"`
 	Type        string `json:"type,omitempty"`

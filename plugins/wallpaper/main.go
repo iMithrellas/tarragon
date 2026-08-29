@@ -39,6 +39,7 @@ type pluginMessage struct {
 
 type actionItem struct {
 	Name        string `json:"name"`
+	Type        string `json:"type,omitempty"`
 	Default     bool   `json:"default,omitempty"`
 	Description string `json:"description,omitempty"`
 }

@@ -34,6 +34,7 @@ type result struct {
 
 type action struct {
 	Name        string `json:"name"`
+	Type        string `json:"type,omitempty"`
 	Default     bool   `json:"default,omitempty"`
 	Description string `json:"description,omitempty"`
 }

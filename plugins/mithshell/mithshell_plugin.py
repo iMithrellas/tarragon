@@ -57,36 +57,42 @@ COMMANDS = [
         "label": "Toggle Do Not Disturb",
         "description": "Silence or restore notifications",
         "args": ["inhibit"],
+        "keep_open": True,
     },
     {
         "id": "inhibit-1h",
         "label": "Do Not Disturb for 1 Hour",
         "description": "Silence notifications for one hour",
         "args": ["inhibit", "1h"],
+        "keep_open": True,
     },
     {
         "id": "reload",
         "label": "Reload Config",
         "description": "Reload the mithshell TOML configuration",
         "args": ["reload"],
+        "keep_open": True,
     },
     {
         "id": "theme-dark",
         "label": "Dark Theme",
         "description": "Switch mithshell to dark mode",
         "args": ["theme", "mode", "dark"],
+        "keep_open": True,
     },
     {
         "id": "theme-light",
         "label": "Light Theme",
         "description": "Switch mithshell to light mode",
         "args": ["theme", "mode", "light"],
+        "keep_open": True,
     },
     {
         "id": "theme-reset",
         "label": "Reset Theme",
         "description": "Remove the persisted theme override",
         "args": ["theme", "reset"],
+        "keep_open": True,
     },
 ]
 
@@ -94,18 +100,20 @@ COMMANDS_BY_ID = {cmd["id"]: cmd for cmd in COMMANDS}
 
 
 def _result_for(cmd: dict) -> dict:
+    action = {
+        "name": "run",
+        "default": True,
+        "description": cmd["label"],
+    }
+    if cmd.get("keep_open"):
+        action["type"] = "keep_open"
+
     return {
         "id": cmd["id"],
         "label": cmd["label"],
         "description": cmd["description"],
         "category": "mithshell",
-        "actions": [
-            {
-                "name": "run",
-                "default": True,
-                "description": cmd["label"],
-            }
-        ],
+        "actions": [action],
     }
 
 

@@ -15,3 +15,5 @@ Notes
 - If input does not look like math, the plugin returns no results.
 - Equations with no real solution, infinitely many solutions, or a degree
   higher than two return no results.
+- Copy actions use `type: "keep_open"` so multiple results can be copied
+  without reopening Tarragon.

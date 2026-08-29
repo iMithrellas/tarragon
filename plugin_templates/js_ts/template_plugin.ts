@@ -3,6 +3,7 @@ import readline from "node:readline";
 
 type Action = {
   name: string;
+  type?: string;
   default?: boolean;
   description?: string;
 };

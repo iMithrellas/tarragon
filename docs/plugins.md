@@ -353,6 +353,24 @@ The UI replaces its input with `query`, remains open, and submits a normal
 query request. It must not send a select request for this action. Actions
 without `type: "query_replace"` retain the existing select behavior.
 
+An action can also keep the UI open after a successful normal selection:
+
+```json
+{
+  "name": "Copy",
+  "type": "keep_open"
+}
+```
+
+Action types have these semantics:
+
+- no `type`: send a normal select request; the UI dismisses after success.
+- `type: "keep_open"`: send a normal select request; the UI remains open after success.
+- `type: "query_replace"`: replace the query and submit it normally; the UI remains open.
+
+The UI should remain open when an action fails so the user can retry. The
+`keep_open` type is a UI hint, and the UI may apply its own user-level policy.
+
 ## Makefile Specification (Required)
 
 Your Makefile must define the following targets:

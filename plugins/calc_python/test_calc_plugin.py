@@ -35,6 +35,11 @@ class CalcPluginTest(unittest.TestCase):
     def test_rejects_unsafe_expression(self):
         self.assertEqual(plugin.process("x = __import__('os').system('true')"), [])
 
+    def test_copy_action_keeps_launcher_open(self):
+        results = plugin.process("2 + 2")
+
+        self.assertEqual(results[0]["actions"][0]["type"], "keep_open")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -91,6 +91,22 @@ func TestQueryReplacementActionRoundTrip(t *testing.T) {
 	}
 }
 
+func TestKeepOpenActionRoundTrip(t *testing.T) {
+	in := &Action{Name: "Copy", Type: ActionTypeKeepOpen, Default: true}
+	b, err := json.Marshal(in)
+	if err != nil {
+		t.Fatalf("marshal action: %v", err)
+	}
+
+	var out Action
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatalf("unmarshal action: %v", err)
+	}
+	if out != *in {
+		t.Fatalf("action changed across wire round trip: got %+v, want %+v", out, *in)
+	}
+}
+
 func TestCleanupSocketRemovesFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "x.sock")
