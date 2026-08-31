@@ -1,4 +1,5 @@
 import unittest
+from unittest import mock
 
 import calc_plugin as plugin
 
@@ -39,6 +40,18 @@ class CalcPluginTest(unittest.TestCase):
         results = plugin.process("2 + 2")
 
         self.assertEqual(results[0]["actions"][0]["type"], "keep_open")
+
+    @mock.patch.object(plugin.subprocess, "run")
+    def test_copy_negative_result_is_not_parsed_as_an_option(self, run):
+        self.assertEqual(
+            plugin._copy_to_clipboard("-2"),
+            (True, "Copied to clipboard"),
+        )
+        run.assert_called_once_with(
+            ["wl-copy", "--", "-2"],
+            check=True,
+            timeout=5,
+        )
 
 
 if __name__ == "__main__":

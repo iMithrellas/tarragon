@@ -311,7 +311,7 @@ def process(text: str):
 
 def _copy_to_clipboard(text: str) -> tuple[bool, str]:
     try:
-        subprocess.run(["wl-copy", text], check=True, timeout=5)
+        subprocess.run(["wl-copy", "--", text], check=True, timeout=5)
         return True, "Copied to clipboard"
     except (FileNotFoundError, subprocess.CalledProcessError):
         try:
