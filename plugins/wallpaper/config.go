@@ -39,6 +39,9 @@ type Config struct {
 	// Theming
 	MatugenMode string `toml:"matugen_mode"`
 	MatugenType string `toml:"matugen_type"`
+	// MatugenOLED lowers dark-scheme lightness so low-lightness surfaces become
+	// complete black while retaining more color in accents.
+	MatugenOLED bool `toml:"matugen_oled"`
 	// MatugenPrefer maps to matugen's --prefer. It is mandatory in practice:
 	// matugen >= 4 refuses to guess a source colour when several candidates
 	// exist and stdout is not a TTY, which is always the case for a plugin
@@ -68,6 +71,7 @@ func defaultConfig() *Config {
 		AwwwResizeMode:         "crop",
 		MatugenMode:            "dark",
 		MatugenType:            "scheme-tonal-spot",
+		MatugenOLED:            false,
 		MatugenPrefer:          "saturation",
 		RestoreOnStart:         true,
 		RestoreTimeout:         "60s",
@@ -255,6 +259,10 @@ awww_resize = "crop"
 # awww (or another wallpaper daemon).
 matugen_mode = "dark"
 matugen_type = "scheme-tonal-spot"
+# Prefer OLED-friendly dark colors. This passes --lightness-dark -0.2 to
+# matugen, making low-lightness surfaces complete black without flattening
+# brighter accent colors. Requires a recent matugen (v0.10+).
+matugen_oled = false
 # Which candidate source colour to pick. Required for matugen >= 4 when run
 # without a TTY (i.e. always, from the daemon). One of: darkness, lightness,
 # saturation, less-saturation, value, closest-to-fallback. Set to "" to omit.

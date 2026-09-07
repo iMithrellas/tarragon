@@ -120,6 +120,12 @@ func (m *matugenBackend) Apply(ctx context.Context, path string, cfg *Config, _ 
 		return err
 	}
 
+	args := matugenArgs(path, cfg)
+
+	return runCommand(ctx, "matugen", args...)
+}
+
+func matugenArgs(path string, cfg *Config) []string {
 	args := []string{"image", path}
 	if mode := strings.TrimSpace(cfg.MatugenMode); mode != "" {
 		args = append(args, "--mode", mode)
@@ -130,9 +136,11 @@ func (m *matugenBackend) Apply(ctx context.Context, path string, cfg *Config, _ 
 	if prefer := strings.TrimSpace(cfg.MatugenPrefer); prefer != "" {
 		args = append(args, "--prefer", prefer)
 	}
+	if cfg.MatugenOLED {
+		args = append(args, "--lightness-dark", "-0.2")
+	}
 	args = append(args, cfg.MatugenExtraArgs...)
-
-	return runCommand(ctx, "matugen", args...)
+	return args
 }
 
 func ensureAwwwDaemon(ctx context.Context) error {

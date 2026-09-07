@@ -119,6 +119,7 @@ awww_resize = "crop"
 # matugen owns wallpaper application through ~/.config/matugen/config.toml.
 matugen_mode = "dark"             # dark|light
 matugen_type = "scheme-tonal-spot"
+matugen_oled = false                # clamp low-lightness dark surfaces toward #000000
 matugen_prefer = "saturation"
 # matugen_extra_args = ["--contrast", "0.2"]
 
@@ -132,6 +133,11 @@ restore_timeout = "60s"
 when an image yields several candidates and stdout is not a TTY — which is
 always true for a plugin started by the daemon. Without it, theme generation
 fails on most real photographs.
+
+`matugen_oled = true` adds matugen's `--lightness-dark -0.2` transform. This
+pushes low-lightness surfaces to complete black while preserving more color in
+brighter accents. It requires matugen v0.10 or newer; use `matugen_extra_args`
+if a different lightness level is preferred.
 
 Directories that do not exist are skipped silently, so you can list candidates
 for several machines in one config.

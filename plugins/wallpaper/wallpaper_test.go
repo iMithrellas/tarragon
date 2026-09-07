@@ -167,6 +167,16 @@ func TestConfigDefaultsAndNormalize(t *testing.T) {
 	}
 }
 
+func TestMatugenArgsOLED(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.MatugenOLED = true
+	args := matugenArgs("/wallpapers/night.png", cfg)
+	want := []string{"image", "/wallpapers/night.png", "--mode", "dark", "--type", "scheme-tonal-spot", "--prefer", "saturation", "--lightness-dark", "-0.2"}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("matugen args = %q, want %q", args, want)
+	}
+}
+
 func TestConfigRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
